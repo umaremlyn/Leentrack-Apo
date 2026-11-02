@@ -130,6 +130,81 @@ final class SaleRepository
             ->execute([$e['id'], $e['business_id'], $e['sale_id'], $e['edited_by'], $e['reason'], $e['old_total'], $e['new_total'], $e['paid_so_far'], $e['balance_due'], $e['refund_due'], $e['extra_paid'], $e['extra_method'], $e['before_discount'], $e['after_discount'], $e['before_items'], $e['after_items']]);
     }
 
+    // ------------------------------------------------------------------------------------------ repayments / credit
+    /** @return array<string,mixed>|null */
+    public function repaymentByOperation(string $bid, string $opId): ?array
+    {
+        $st = $this->pdo->prepare('SELECT id,sale_id,customer_id,amount,payment_method,notes,created_at FROM debt_repayments WHERE business_id = ? AND client_operation_id = ?');
+        $st->execute([$bid, $opId]);
+        return $st->fetch() ?: null;
+    }
+
+    /** @param array<string,mixed> $r */
+    public function insertRepayment(array $r): void
+    {
+        $this->pdo->prepare('INSERT INTO debt_repayments (id,business_id,sale_id,customer_id,amount,payment_method,notes,client_operation_id,created_by) VALUES (?,?,?,?,?,?,?,?,?)')
+            ->execute([$r['id'], $r['business_id'], $r['sale_id'], $r['customer_id'], $r['amount'], $r['payment_method'], $r['notes'], $r['client_operation_id'], $r['created_by']]);
+    }
+
+    /** @return list<array<string,mixed>> */
+    public function repayments(string $bid, array $saleIds): array
+    {
+        if (!$saleIds) { return []; }
+        $st = $this->pdo->prepare('SELECT id,sale_id,amount,payment_method,notes,created_at FROM debt_repayments WHERE business_id = ? AND sale_id IN (' . implode(',', array_fill(0, count($saleIds), '?')) . ') ORDER BY created_at, id');
+        $st->execute(array_merge([$bid], $saleIds));
+        return $st->fetchAll();
+    }
+
+    /**
+     * Credit sales that still have a balance of at least one cent (same rule as credit/page.tsx), oldest first.
+     * @param list<string>|null $outletIds
+     * @return list<array<string,mixed>>
+     */
+    public function openCredit(string $bid, ?string $customerId, ?array $outletIds): array
+    {
+        $where = ["s.business_id = ?", "s.payment_status = 'pending'", 's.customer_id IS NOT NULL'];
+        $args = [$bid, $bid];
+        if ($customerId !== null) { $where[] = 's.customer_id = ?'; $args[] = $customerId; }
+        if ($outletIds !== null) {
+            if (!$outletIds) { return []; }
+            $where[] = 's.outlet_id IN (' . implode(',', array_fill(0, count($outletIds), '?')) . ')';
+            array_push($args, ...$outletIds);
+        }
+        $st = $this->pdo->prepare('SELECT * FROM (SELECT s.id,s.receipt_number,s.total_amount,s.amount_paid,s.created_at,s.notes,s.customer_id,c.name AS customer_name,c.phone AS customer_phone,COALESCE(r.repaid,0) AS repaid
+            FROM sales s JOIN customers c ON c.id = s.customer_id AND c.business_id = s.business_id
+            LEFT JOIN (SELECT sale_id, SUM(amount) AS repaid FROM debt_repayments WHERE business_id = ? GROUP BY sale_id) r ON r.sale_id = s.id
+            WHERE ' . implode(' AND ', $where) . ') t WHERE t.total_amount - t.amount_paid - t.repaid >= 0.01 ORDER BY t.created_at, t.id');
+        $st->execute($args);
+        return $st->fetchAll();
+    }
+
+    /** What a customer owes right now: Σ over their open (pending) sales of total − upfront − repaid, never below 0 per sale. */
+    public function customerBalance(string $bid, string $customerId): string
+    {
+        $st = $this->pdo->prepare("SELECT COALESCE(SUM(GREATEST(0, s.total_amount - s.amount_paid - COALESCE(r.repaid,0))),0)
+            FROM sales s LEFT JOIN (SELECT sale_id, SUM(amount) AS repaid FROM debt_repayments WHERE business_id = ? GROUP BY sale_id) r ON r.sale_id = s.id
+            WHERE s.business_id = ? AND s.customer_id = ? AND s.payment_status = 'pending'");
+        $st->execute([$bid, $bid, $customerId]);
+        return (string) $st->fetchColumn();
+    }
+
+    /** @return list<array<string,mixed>> credit sales of a customer (not voided) */
+    public function creditSalesOf(string $bid, string $customerId): array
+    {
+        $st = $this->pdo->prepare("SELECT id,receipt_number,total_amount,amount_paid,created_at,payment_status FROM sales WHERE business_id = ? AND customer_id = ? AND is_credit = 1 AND payment_status IN ('pending','completed') ORDER BY created_at, id");
+        $st->execute([$bid, $customerId]);
+        return $st->fetchAll();
+    }
+
+    /** @return list<array<string,mixed>> */
+    public function repaymentsOfCustomer(string $bid, string $customerId): array
+    {
+        $st = $this->pdo->prepare("SELECT d.id,d.sale_id,d.amount,d.payment_method,d.notes,d.created_at,s.receipt_number FROM debt_repayments d JOIN sales s ON s.id = d.sale_id
+            WHERE d.business_id = ? AND s.customer_id = ? AND s.payment_status IN ('pending','completed') ORDER BY d.created_at, d.id");
+        $st->execute([$bid, $customerId]);
+        return $st->fetchAll();
+    }
+
     public function countSales(string $bid): int
     {
         $st = $this->pdo->prepare("SELECT COUNT(*) FROM sales WHERE business_id = ? AND payment_status <> 'voided'");

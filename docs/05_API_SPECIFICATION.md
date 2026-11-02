@@ -139,3 +139,9 @@ Expenses `GET/POST /expenses`, `PATCH/DELETE /expenses/{id}`, categories `GET/PO
 > * `POST /sales/{id}/void` — `{reason}` (3–200 chars); manager+; restores stock, reverses customer spend/visit/points, returns `refund_due`.
 > * `GET /sales/{id}/document?format=json` — receipt/invoice model + `title`, `status`, `file_name`, `share_message`, `whatsapp_number`; `format=pdf` → 501.
 > * `GET|PUT /businesses/{id}/branding` — read: any member; write (full replacement): owner. Logo: PNG/JPEG/WebP data-URL ≤200,000 chars, signature-checked.
+
+> **Phase 3d as built:**
+> * `POST /sales/{id}/repayments` — `{client_operation_id (UUID or Idempotency-Key), amount, method?, notes?}`; permission `credit.repay` (manager+). `201` records it; `200` + `meta.replayed` repeats an earlier one (same content) with its original balances; same id with different content → `409 idempotency_conflict`. Errors: `422` amount ≤ 0 / > balance / bad decimals; `409 not_open` (fully paid, voided). Returns `{repayment, sale:{status, previous_balance, balance_due}, document}` where `document` is the payment receipt model.
+> * `GET /credit` — customers with open debts, biggest first; each has `sales[]` (oldest first) with `balance_due`, `days_old`, `badge` (`recent` / `two_weeks` ≥14d / `overdue` ≥30d) and `repayments[]`; filters `search`, `customer_id`, `overdue`, `page`, `per_page`; `meta.summary` {total_owed, overdue_owed, customers, open_sales}.
+> * `GET /customers/{id}/debt`, `GET /customers/{id}/statement?from&to` (opening balance, running balance per line, closing = current debt), `GET /customers/{id}/sales`.
+> * `DELETE /customers/{id}` → `409 customer_owes_money` while any balance remains.

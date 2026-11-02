@@ -65,6 +65,10 @@ MySQL-backed fixed window (`rate_limits`), usable on shared hosting. Applied per
 | D-33 | `sale_items` snapshot product name, type and unit cost | receipts and profit stay true after renames, archiving or cost changes |
 | D-34 | Money ceiling raised to ₦10bn and `Money::mulRatio` is exact for any inputs (big-number fallback) | ratio tax on very large sales multiplied two cent amounts beyond 64 bits and PHP would have silently used a float |
 | D-35 | Receipt numbers are `SALE-YYYYMMDD-NNNNNN` from a per-business counter, allocated last in the transaction | server-issued, sequential, unforgeable (S-12); the source's `SALE-<ms>-<rand>` was client-made |
+| D-36 | Repayments use the global lock order customer → sale, are append-only (no update/delete code path), idempotent by `client_operation_id` (replay returns the exact historical balances), and amount ≤ balance is checked under the locks | concurrent payments cannot exceed the balance; verified with 8 parallel processes |
+| D-37 | A debt is OPEN while the sale is `pending` and total − paid-at-till − Σ repayments ≥ 0.01; the sale flips to `completed` in the same transaction as the payment that clears it | same rule as `credit/page.tsx`, enforced atomically instead of in the browser |
+| D-38 | Statements list CREDIT sales only (cash sales never touch the account); voided sales are excluded; the closing balance always equals the live debt and the test asserts it | an account statement that disagrees with the credit list is worse than none |
+| D-39 | A customer who owes money cannot be archived (409 `customer_owes_money`) | archiving would hide a live debt |
 
 ## Phase 2 additions
 * **Schema:** migrations `0002_identity` (users, user_profiles, auth_sessions, user_tokens, platform_admins) and `0003_tenancy` (businesses, locations, business_members, member_outlets, audit_logs).
@@ -90,3 +94,7 @@ MySQL-backed fixed window (`rate_limits`), usable on shared hosting. Applied per
 * **`SaleService`:** `checkout` (server computes every figure; only item ids/quantities, discount choices and payment are accepted — any price/total/tax field is a 422), `list`, `get`, `document`, `edit` (port of `edit_sale`), `void`.
 * **Pure ports with golden tests against the original TypeScript:** `Sales\EditMath` (`lib/sales/edit-math.ts`, 700 cases), `Documents\DocumentModel` + `DocumentBuilder` (`lib/documents/model.ts`, `build.ts`).
 * **Money:** ceiling ₦10bn; `Money::mulDivRound` exact big-number fallback.
+
+## Phase 3d additions
+* **Endpoints:** `POST /sales/{id}/repayments`, `GET /credit`, `GET /customers/{id}/debt`, `GET /customers/{id}/statement`, `GET /customers/{id}/sales`.
+* **`CreditService`:** repay (with payment receipt via the already-ported `DocumentBuilder::fromPayment`), grouped credit list with the source's 14/30-day badges, per-customer debt, statement with opening/closing balance. `credit.read` permission added (managers + owner, as the sidebar).

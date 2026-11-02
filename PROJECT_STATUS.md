@@ -1,6 +1,6 @@
 # LeenTrack Rebuild — Project Status
 
-_Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current phase: **Phase 3 — Business operations: 3a ✅ · 3b ✅ · 3c (POS, sales, documents) COMPLETE; 3d (credit & repayments) next**_
+_Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current phase: **Phase 3 — Business operations: 3a ✅ · 3b ✅ · 3c ✅ · 3d (credit & repayments) COMPLETE; 3e (expenses, profit, dashboard) next**_
 
 ## Ground rules in force
 * Production (Vercel + Supabase) is **never touched**. `umaremlyn/Track` is read-only to this project (verified unmodified).
@@ -14,8 +14,33 @@ _Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current
 | 0 Source audit | ✅ docs 01–10 |
 | 1 Foundation | ✅ backend skeleton + migrator + rate limiter + Money; Flutter scaffold + adaptive shell + API client; docs 11–12 |
 | 2 Database & core (auth, tenancy, policies) | ✅ identity + tenancy + authorization + plan guard + audit; deployment guide drafted |
-| 3 Business operations | 🔶 3a catalogue & stock ✅ · 3b customers/groups/loyalty ✅ · 3c POS/sales/documents ✅ · 3d credit ⏳ next · 3e expenses/profit/dashboard · 3f suppliers/purchases · 3g transfers · 3h reports · 3i staff extras/account lifecycle · 3j billing · 3k admin · 3l settings/branding/cron |
+| 3 Business operations | 🔶 3a catalogue & stock ✅ · 3b customers/groups/loyalty ✅ · 3c POS/sales/documents ✅ · 3d credit ✅ · 3e expenses/profit/dashboard ⏳ next · 3f suppliers/purchases · 3g transfers · 3h reports · 3i staff extras/account lifecycle · 3j billing · 3k admin · 3l settings/branding/cron |
 | 4–10 | ⏳ not started |
+
+## Session 7 report (Phase 3d — credit & repayments)
+**Completed**
+* `POST /sales/{id}/repayments`: atomic (lock order customer → sale), amount must be > 0 and ≤ balance, append-only rows, sale becomes `completed` in the same transaction that clears it, customer spend and loyalty updated, idempotent by `client_operation_id` (a replay returns the exact balances as they were at that payment), payment receipt returned through the already-ported `fromPayment` builder.
+* `GET /credit` (customers with open debts, biggest first; sales oldest first; the source's 14/30-day badges; overdue totals; search/overdue/customer filters; paging), `GET /customers/{id}/debt`, `GET /customers/{id}/statement` (opening balance, running balance, closing = live debt), `GET /customers/{id}/sales`.
+* Rule: a customer who owes money cannot be archived (`customer_owes_money`).
+* Edit and void now exercised against real repayments (S-10), with a **money-received invariant** asserted after each scenario: `customers.total_spent` = Σ money received on non-voided sales + Σ their repayments; points = ledger; no pending sale with zero balance; no completed credit sale still owing.
+* Docs: ADRs D-36…D-39, gaps G-34/G-35, a source defect recorded (the web dashboard's credit totals ignore repayments).
+
+**Tests executed (actual results)**
+| Suite | Result |
+|---|---|
+| `vendor/bin/phpunit` (unit + golden + MySQL 8.4.6 integration) | **OK — 194 tests, 45,590 assertions** |
+| Parallel processes (real concurrent requests) | 8 simultaneous payments of 30.00 against a 100.00 debt → exactly 3 accepted, the rest refused cleanly (never a 500), repaid = 90.00; 5 simultaneous pay-offs of the whole balance → exactly 1; 6 identical retries → 1 row. With both row locks removed these tests fail 4/4 |
+| Mutation check (12 deliberate breakages, then re-checked) | 9 caught first time. **3 survived and were each fixed by a better test:** (1) my idempotency mutation was malformed (operator precedence kept the check alive) — redone properly and caught; (2) overdue threshold 30→31 survived because my test used a 31-day-old sale → added exact 13/14/29/30-day boundary test; (3) "settled debts still listed" survived because normal data never has a pending sale with zero balance → added a legacy-style seeded row test (the source explicitly skips such rows). Removing only the sale lock correctly survives (the customer lock still serialises); removing both is caught |
+| Routes | the route-table security test again covered every new route automatically (401 for missing/garbage tokens) |
+
+**Security findings closed (by test):** S-10 (server-validated, atomic, append-only repayments; over-payment impossible even under concurrency; staff cannot alter payment history because no write path exists), S-09 further (repayments are idempotent for the offline queue).
+
+**Not done / not verified**
+* The dashboard/reports **use of these debt figures** arrives in 3e/3h (a test will pin dashboard credit = credit list).
+* Repayment **immutability is application-level** (G-35), not a database trigger.
+* **Reminders** (the brief's "payment reminders where implemented"): the source has none beyond WhatsApp sharing of the invoice/receipt; nothing was built.
+* Refund/cash-out ledger (G-32) and server PDF (G-31) remain open.
+* No Flutter/web client uses any of this yet.
 
 ## Session 6 report (Phase 3c — POS, sales, documents)
 **Completed**
@@ -159,4 +184,4 @@ _Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current
 G-01 schema-only dump · G-02 data + `auth.users` export (only when ready for rehearsal) · G-03 which of 016–019 are applied · G-09 Flutterwave confirmation · G-10 SMS gateway · G-16 Truehost PHP facts (`phpinfo`) — and a **review of S-01/S-03/S-04/S-06 against the live project**, independent of this rebuild.
 
 ## Exact next task
-Phase 3d — credit & repayments: `POST /sales/{id}/repayments` (atomic: lock customer → sale; amount ≤ balance; immutable rows; sale becomes `completed` at zero; loyalty earn on money received; customer `total_spent`; idempotent by `client_operation_id`; payment receipt document via the already-ported `fromPayment`), `GET /credit` (open/overdue, per-customer totals, 30-day overdue rule), `GET /customers/{id}/debt` and `/statement`, `GET /customers/{id}/sales`, and the "customer who owes money cannot be archived" guard. Tests: T-CRED-1 (bounds, over-payment rejected, concurrent repayments cannot exceed the balance — parallel processes), balance arithmetic against `credit/page.tsx` semantics, statement correctness, payment-document golden (already covered), S-XBIZ on every route, and exercising the edit/void paths against real repayment rows (S-10).
+Phase 3e — expenses, profit, dashboard: migration `0008` (`expense_categories`, `expenses` with `expense_date` DATE, payment method/status/reference, optional `outlet_id`, receipt image URL), CRUD with filters + default category seeding as in the source, plan/permission rules (managers+); **profit** as a port of `lib/profit/compute.ts` (golden vectors generated from the original, incl. missing-cost, no-item sales, pro-rata discount, snapshot vs current cost, period ranges in the business time zone) exposed as `GET /profit?period=today|week|month|lastMonth|custom`; **dashboard** `GET /dashboard?from&to&outlet_id` with distinct named metrics (billed revenue, collected, tax, COGS, gross/net profit, expenses, credit outstanding/overdue [from `CreditService`, pinned equal to the credit list], inventory value cost/retail, low/out-of-stock counts, recent sales, top products, 7-day series). Never conflate revenue with profit. Tests: T-EXP-1, G-PROF-1/2, T-DASH-1 (independent SQL recomputation on a seeded dataset), S-XBIZ on every new route.

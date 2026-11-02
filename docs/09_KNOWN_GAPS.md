@@ -29,6 +29,8 @@ Each item: what is missing, why it matters, what I did/will do meanwhile, and wh
 | G-31 | **Server-side PDF is not built.** `GET /sales/{id}/document` returns the full document model (JSON, incl. share text and WhatsApp number); `format=pdf` answers 501. Web keeps its canvas→PDF; Flutter renders/prints from the JSON. | No server PDF | Planned with the Flutter print work (Phase 5/6) | — |
 | G-32 | **Voids and refunds record what is owed back, but no cash is tracked.** `refund_due` is returned and audited; there is no till/drawer ledger (the source had none). | Cash-out must be handled manually | As the source | Owner decision if a till ledger is wanted |
 | G-33 | After an edit the discount breakdown (`group/manual/points`) is informational: group discount is zeroed and the rest is attributed to manual/points. | Reporting by discount type is approximate for edited sales | Totals are exact | — |
+| G-34 | Legacy customers may have only `first_name`/`last_name` (the web app's `customerDisplayName` falls back to them). The importer must set `name = COALESCE(NULLIF(TRIM(name),''), TRIM(CONCAT_WS(' ', first_name, last_name)), 'Unknown')`. | Customers could import without a name | Recorded for Phase 8 | Needs the schema dump (G-01) to confirm columns |
+| G-35 | Repayment immutability is enforced by the application (no update/delete path), not by database triggers, because shared hosting often withholds the TRIGGER privilege. | A person with direct DB access could alter history | Audit log + nightly reconciliation job (Phase 3l) will flag drift | — |
 
 ## B. Semantics the source leaves ambiguous (owner decisions)
 
@@ -46,6 +48,8 @@ Each item: what is missing, why it matters, what I did/will do meanwhile, and wh
 | G-20 | Tax: single rate per business; per-item/ inclusive tax not in source. | Same as source. |
 
 ## C. Defects in the source I will **not** reproduce (documented, with the fix)
+
+* **Dashboard credit figures ignore repayments.** `dashboard/page.tsx` computes "credit owed" and "overdue credit" as `total_amount − amount_paid` over pending sales, never subtracting `debt_repayments`, so every partly-repaid debt is overstated on the dashboard while the Credit page shows the right figure. The rebuild uses one definition everywhere (`CreditService`/`customerBalance`); Phase 3e's dashboard must reuse it and a test will pin the two together.
 
 S-01…S-22 in `01`. Plus behaviours: reports revenue ignores status; reports low-stock threshold inconsistent; top-products limited to 200 sales; CSV export unescaped; purchase `sent` status mismatch; dashboard "revenue" mixes billed/unpaid/tax; client-generated receipt numbers; offline sync inserts bare rows; `getLimit` etc. never enforced server-side; `profiles.role` conflation; `invited` staff gain access by e-mail match.
 

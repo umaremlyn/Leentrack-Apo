@@ -76,7 +76,7 @@ final class Container
 
     public function customerRepo(): CustomerRepository { return $this->once('custRepo', fn () => new CustomerRepository($this->app->pdo())); }
     public function loyalty(): LoyaltyService { return $this->once('loyalty', fn () => new LoyaltyService($this->app->pdo(), $this->customerRepo(), $this->audit())); }
-    public function customers(): CustomerService { return $this->once('custs', fn () => new CustomerService($this->customerRepo(), $this->audit())); }
+    public function customers(): CustomerService { return $this->once('custs', fn () => new CustomerService($this->customerRepo(), $this->audit(), $this->saleRepo())); }
     public function customerGroups(): CustomerGroupService { return $this->once('groups', fn () => new CustomerGroupService($this->customerRepo(), $this->audit())); }
 
     public function saleRepo(): SaleRepository { return $this->once('saleRepo', fn () => new SaleRepository($this->app->pdo())); }
@@ -85,6 +85,8 @@ final class Container
     {
         return $this->once('sales', fn () => new SaleService($this->app->pdo(), $this->saleRepo(), $this->catalog(), $this->customerRepo(), $this->stock(), $this->loyalty(), $this->audit(), (bool) ($this->app->config['enforce_sales_limit'] ?? false)));
     }
+
+    public function credit(): CreditService { return $this->once('credit', fn () => new CreditService($this->app->pdo(), $this->saleRepo(), $this->customerRepo(), $this->loyalty(), $this->audit())); }
 
     public function locations(): LocationService { return $this->once('loc', fn () => new LocationService($this->tenants(), $this->audit())); }
     public function me(): MeService { return $this->once('me', fn () => new MeService($this->users(), $this->tenants(), $this->sessionsRepo(), $this->auth(), $this->audit())); }

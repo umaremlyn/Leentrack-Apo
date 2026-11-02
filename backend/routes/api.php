@@ -18,7 +18,7 @@ return static function (Router $r, Container $c): void {
     $loc = new Lazy(fn () => new LocationController($c->locations()));
     $cat = new Lazy(fn () => new CatalogController($c->categories(), $c->products(), $c->productImport(), $c->stock()));
     $cust = new Lazy(fn () => new CustomerController($c->customers(), $c->customerGroups(), $c->loyalty()));
-    $sale = new Lazy(fn () => new SaleController($c->sales(), $c->branding()));
+    $sale = new Lazy(fn () => new SaleController($c->sales(), $c->branding(), $c->credit()));
     $admin = new Lazy(fn () => new AdminController($c->app()));
 
     $r->get('/health', [$health, 'show'], [], true);
@@ -97,6 +97,11 @@ return static function (Router $r, Container $c): void {
     $r->get('/sales/{id}/document', [$sale, 'document'], ['auth', 'tenant']);
     $r->post('/sales/{id}/edit', [$sale, 'edit'], ['auth', 'tenant', 'throttle:60,60']);
     $r->post('/sales/{id}/void', [$sale, 'void'], ['auth', 'tenant', 'throttle:30,60']);
+    $r->post('/sales/{id}/repayments', [$sale, 'repay'], ['auth', 'tenant', 'throttle:120,60']);
+    $r->get('/credit', [$sale, 'creditList'], ['auth', 'tenant']);
+    $r->get('/customers/{id}/debt', [$sale, 'customerDebt'], ['auth', 'tenant']);
+    $r->get('/customers/{id}/statement', [$sale, 'customerStatement'], ['auth', 'tenant']);
+    $r->get('/customers/{id}/sales', [$sale, 'customerSales'], ['auth', 'tenant']);
     $r->get('/businesses/{id}/branding', [$sale, 'brandingShow'], ['auth', 'tenant:path']);
     $r->put('/businesses/{id}/branding', [$sale, 'brandingSave'], ['auth', 'tenant:path']);
 

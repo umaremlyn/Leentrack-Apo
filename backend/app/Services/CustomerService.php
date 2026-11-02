@@ -11,13 +11,14 @@ use LeenTrack\Core\Uuid;
 use LeenTrack\Core\Validator;
 use LeenTrack\Http\TenantContext;
 use LeenTrack\Repositories\CustomerRepository;
+use LeenTrack\Repositories\SaleRepository;
 
 final class CustomerService
 {
     /** Visits at which the web UI shows its "loyal customer" star. */
     public const LOYAL_VISITS = 5;
 
-    public function __construct(private readonly CustomerRepository $repo, private readonly AuditService $audit)
+    public function __construct(private readonly CustomerRepository $repo, private readonly AuditService $audit, private readonly ?SaleRepository $sales = null)
     {
     }
 
@@ -78,6 +79,11 @@ final class CustomerService
     {
         $t->require('customers.delete');
         $this->find($t, $id);
+        // A customer who still owes money must stay visible: archiving would hide the debt from the credit list's owner.
+        $owed = $this->sales !== null ? $this->sales->customerBalance($t->businessId, $id) : '0.00';
+        if ((float) $owed >= 0.01) {
+            throw ApiException::conflict('customer_owes_money', 'This customer still owes ' . $owed . '. Record their payment (or void the sale) before archiving them.');
+        }
         $this->repo->setArchived($t->businessId, $id, true);
         $this->audit->log('customer.archive', $req, $t->userId, $t->businessId, 'customer', $id);
     }
