@@ -1,0 +1,119 @@
+# 10 — Acceptance Tests
+
+A feature is complete only when its tests exist **and have been run with recorded results** (`PROJECT_STATUS.md` records actual pass/fail counts). IDs are stable. Types: **U** unit · **G** golden (output must equal values produced by the original TypeScript on the same input) · **I** API integration against MySQL · **S** security · **F** Flutter test · **W** web workflow · **M** migration.
+
+Status of every test below at the end of Phase 0: **not yet written / not run.**
+
+## A. Golden parity (derived from the source — prevents regressions in business meaning)
+
+| ID | Test | Source oracle |
+|---|---|---|
+| G-PLAN-1 | `normalizePlan`, `getLimit`, `isPremium` table incl. legacy names, null, `expired` | `lib/plan-limits.ts` + existing `plan-limits.test.ts` assertions |
+| G-DISC-1 | `checkoutDiscounts` over a grid (group 0/10/99/150 %, manual, points, caps) | `lib/loyalty/math.ts` |
+| G-EDIT-1 | `computeEdit` incl. tax rate recovery (7.5 %, odd ratio, zero tax) | `lib/sales/edit-math.ts` + SQL rules in 017 |
+| G-PROF-1 | `computeProfit` fixtures: services, missing cost, no-item sales, discounts pro-rata, snapshot vs current cost | `lib/profit/compute.ts` |
+| G-PROF-2 | `periodRange` boundaries incl. month ends, DST-less Lagos zone | same |
+| G-DOC-1 | `documentNumber`, `statusFor`, `paymentMethodLabel`, `whatsappNumber`, `fileNameFor`, `shareMessage` | `lib/documents/model.ts` |
+| G-PRICE-1 | Billing totals for 3 cycles × 8 currencies × 2 plans equal `billing-client.calcTotal` and Paystack kobo amounts | `billing-client.tsx`, webhook table |
+| G-LOY-1 | Loyalty earn/progress/redeem sequences vs SQL logic of `loyalty_apply` | 018 |
+
+Harness: `tools/golden/` runs the unmodified TS (via Node 22 type-stripping or `tsc`) and emits JSON; `backend/tests/Golden` asserts PHP output equals it (exact string equality at 2 dp).
+
+## B. Functional (API, with DB)
+
+| ID | Scenario |
+|---|---|
+| T-AUTH-1 | register creates user+business(free)+owner membership; body `role`/`plan` ignored |
+| T-AUTH-2 | login ok / wrong pw / unknown email (same response + similar time) / throttled after N |
+| T-AUTH-3 | legacy bcrypt user logs in once, hash upgraded, legacy hash nulled; second login uses new hash |
+| T-AUTH-4 | refresh rotation; replay of old refresh revokes family; logout; logout-all; expired access |
+| T-AUTH-5 | forgot/reset single-use, expiry, session revocation, no enumeration |
+| T-POS-1 | checkout full payment: totals recomputed server-side, stock decremented, services untouched, customer stats, unit_cost snapshot |
+| T-POS-2 | tampered client totals/price rejected (422) |
+| T-POS-3 | credit sale requires customer; pay-now bounds; status pending/completed |
+| T-POS-4 | insufficient stock → 409 `insufficient_stock`, nothing written (rollback proven) |
+| T-POS-5 | same `client_operation_id` twice (sequential and 20 concurrent) → exactly one sale |
+| T-POS-6 | group discount cap 99 %, points redeem, ledger rows |
+| T-EDIT-1…8 | each rule in 04 §6 (who, status, stale revision, stale paid, stock delta, refund, extra payment, balance needs customer) |
+| T-CRED-1 | repayment bounds; over-payment rejected; concurrent repayments cannot exceed balance; completes sale at 0 |
+| T-INV-1 | product CRUD, plan limit, barcode uniqueness, archive-if-referenced, CSV import validate/commit, export injection-safe |
+| T-STK-1 | adjustments + movements consistent; `Σ levels = stock_quantity` invariant |
+| T-PO-1 | receive additive, partial → `partially_received`, over-receive rejected, second identical request idempotent, cross-business item rejected |
+| T-TRF-1 | transfer conserves stock across dispatch/receive/cancel; variance explicit |
+| T-EXP-1 | expense CRUD/filter; categories |
+| T-DASH-1 | dashboard metrics equal independent SQL recomputation on a seeded dataset; revenue ≠ profit; named metrics |
+| T-RPT-1 | each report vs seed; date/outlet filters; CSV |
+| T-BILL-1 | server catalogue; checkout creates payment; verify activates only on match; plan expiry cron; downgrade; history |
+| T-ADM-1 | admin endpoints only for platform admins; actions audited |
+| T-DOC-1 | receipt/invoice JSON+PDF contains branding, balance, status pill; logo limits |
+| T-ACCT-1 | export contains user's data only; deletion grace and purge |
+
+## S. Security (all mandatory — brief §7)
+
+| ID | Attack |
+|---|---|
+| S-UNAUTH | every route without/with garbage token → 401 (route-table driven test; fails if a route is missing from the allow-list of public routes) |
+| S-XBIZ | for **each** resource: user of business A reads/updates/deletes business B's id → 404 (generated from route table) |
+| S-XOUT | outlet-restricted member cannot read/write other outlets' data |
+| S-ESC-STAFF | cashier calls manager/owner endpoints; body `role` tampering; changing own membership role |
+| S-ESC-ADMIN | register/invite/update-profile with `role:admin`; hitting `/admin/*` as owner; `platform_admins` insertion only via CLI |
+| S-PLAN | PATCH business with `plan`, `plan_expiry`, `plan_status` → 422; direct subscription mutation impossible |
+| S-PAY-FORGE | webhook with bad/missing signature → 401 and no state change; valid signature but wrong amount/currency/unknown ref → `needs_review`, no activation |
+| S-PAY-DUP | same webhook ×N and verify+webhook race → one activation, one billing row |
+| S-PAY-META | paying Growth price with `plan=business` metadata → Growth (or rejected) |
+| S-DUP-SALE | see T-POS-5, plus offline replay of the same op after crash |
+| S-STOCK | cashier `POST /stock/adjustments` → 403; cross-business product id → 404 |
+| S-PO | cashier receive → 403; foreign order → 404; double receive no double stock |
+| S-IDOR | sequential/UUID guessing on sales, customers, receipts, documents, uploads, exports |
+| S-TOKEN | tampered, truncated, expired, revoked, other-device tokens; token in query string rejected |
+| S-SESSION | password change/reset revokes sessions; removed staff loses access immediately |
+| S-UPLOAD | SVG, polyglot GIF/PHP, double extension, oversize, traversal in filename, zip bomb image dimensions |
+| S-SQLI | injection corpus on every filter/sort/search param (no 500s, no data change) |
+| S-RATE | login/register/forgot/webhook/sync endpoints enforce limits with `429` + `Retry-After` |
+| S-CORS | disallowed Origin gets no ACAO; preflight limited |
+| S-HEADERS | security headers present; no stack/SQL in any error body (fuzz) |
+| S-CSV | exported cells beginning with `=,+,-,@` neutralised |
+| S-SECRETS | repo scan (gitleaks-style) clean; `.env` not under webroot (deployment check script) |
+
+## C. Offline / sync (Phase 4)
+
+| ID | Scenario |
+|---|---|
+| SYN-1 | queue survives app kill/restart/device reboot (SQLite durability test) |
+| SYN-2 | batch delivered twice (network drop after server commit) → no duplicates |
+| SYN-3 | two devices sell last unit offline → both recorded, `oversold` conflict raised, visible in app, resolvable |
+| SYN-4 | price changed server-side while offline → `price_changed` flag, sale kept |
+| SYN-5 | membership revoked while offline → `permission_revoked`, ops held for review not applied silently |
+| SYN-6 | clock skew ±2 h, ±3 days; future-dated op clamped/flagged |
+| SYN-7 | pull cursor: tombstones, pagination, resume after partial apply |
+| SYN-8 | retry/backoff schedule; failed op manual retry; status screen lists failed/unresolved |
+| SYN-9 | reconciliation job detects injected drift |
+
+## D. Flutter (Phase 5/6)
+
+F-LOGIN/LOGOUT, F-NAV (mobile bottom nav / desktop sidebar), F-DASH, F-PROD, F-POS (cart maths equals golden vectors; checkout online/offline), F-SYNC-UI, F-CUST, F-CRED, F-PRINT (receipt bytes ESC/POS snapshot + PDF), F-SCAN (unit-level; hardware test checklist), F-RESP (golden screenshots at 360×800, 768×1024, 1280×800, 1920×1080), F-A11Y basic.
+
+## E. Web (Phase 7) — same workflow list executed twice (backend=supabase, backend=php) against non-production targets
+
+W-LOGIN, W-REGISTER, W-DASH, W-POS, W-INV, W-CAT, W-SALES (+edit), W-CREDIT, W-CUST, W-EXP, W-PROFIT, W-REPORTS, W-PURCH, W-TRF, W-LOC, W-STAFF (invite→accept), W-SETTINGS, W-BILLING (sandbox), W-ADMIN, W-PROFILE (sessions/export/delete). Visual regression screenshots on key pages show no unintended UI change.
+
+## M. Migration (Phase 8; fixture-only until real export exists)
+
+| ID | Check |
+|---|---|
+| M-ROW | counts source = imported + quarantined |
+| M-FK | zero orphans |
+| M-MONEY | per-business totals identical (decimal-exact) |
+| M-PROFIT | PHP profit == original `computeProfit` for all businesses/periods |
+| M-CREDIT | open balances per customer identical |
+| M-STOCK | Σ levels = stock_quantity; per-product equal |
+| M-IDEMP | running import twice yields identical DB state |
+| M-RESUME | kill mid-run, resume → complete & consistent |
+| M-DELTA | modified/added/deleted source rows after baseline reflected |
+| M-AUTH | fixture legacy hashes (locally generated `$2a$`) verify and upgrade |
+| M-ROLLBACK | rollback of a run removes only that run's rows |
+| M-LOG | log scan: no hashes, tokens, passwords, raw PII |
+
+## F. Release gates (all must be true)
+
+Feature = working client + API + persistence + authN + authZ + validation + error handling + tests (run, recorded) + docs. No mocked/hard-coded data paths. No open Critical/High security findings. Migration rehearsal reconciliation PASS signed by owner. Rollback rehearsed.
