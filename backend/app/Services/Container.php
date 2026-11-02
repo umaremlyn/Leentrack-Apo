@@ -10,6 +10,7 @@ use LeenTrack\Mail\Mailer;
 use LeenTrack\Mail\NativeMailer;
 use LeenTrack\Repositories\CatalogRepository;
 use LeenTrack\Repositories\CustomerRepository;
+use LeenTrack\Repositories\SaleRepository;
 use LeenTrack\Repositories\SessionRepository;
 use LeenTrack\Repositories\TenantRepository;
 use LeenTrack\Repositories\UserRepository;
@@ -77,6 +78,13 @@ final class Container
     public function loyalty(): LoyaltyService { return $this->once('loyalty', fn () => new LoyaltyService($this->app->pdo(), $this->customerRepo(), $this->audit())); }
     public function customers(): CustomerService { return $this->once('custs', fn () => new CustomerService($this->customerRepo(), $this->audit())); }
     public function customerGroups(): CustomerGroupService { return $this->once('groups', fn () => new CustomerGroupService($this->customerRepo(), $this->audit())); }
+
+    public function saleRepo(): SaleRepository { return $this->once('saleRepo', fn () => new SaleRepository($this->app->pdo())); }
+    public function branding(): BrandingService { return $this->once('branding', fn () => new BrandingService($this->saleRepo(), $this->audit())); }
+    public function sales(): SaleService
+    {
+        return $this->once('sales', fn () => new SaleService($this->app->pdo(), $this->saleRepo(), $this->catalog(), $this->customerRepo(), $this->stock(), $this->loyalty(), $this->audit(), (bool) ($this->app->config['enforce_sales_limit'] ?? false)));
+    }
 
     public function locations(): LocationService { return $this->once('loc', fn () => new LocationService($this->tenants(), $this->audit())); }
     public function me(): MeService { return $this->once('me', fn () => new MeService($this->users(), $this->tenants(), $this->sessionsRepo(), $this->auth(), $this->audit())); }

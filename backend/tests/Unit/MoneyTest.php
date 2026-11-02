@@ -101,4 +101,33 @@ final class MoneyTest extends TestCase
         $this->expectException(\DivisionByZeroError::class);
         $m('5')->floorDiv(Money::zero());
     }
+
+    /** Expected values computed independently with Python big integers: round_half_up(a*b/d). Includes products far beyond 64 bits. */
+    public function testMulDivRoundIsExactEvenWhenTheProductExceeds64Bits(): void
+    {
+        $cases = [
+            [999_999_999_999, 999_999_999_999, 999_999_999_999, 999_999_999_999],   // a*b ≈ 1e24
+            [999_999_999_999, 999_999_999_998, 1_000_000_000_000, 999_999_999_997],
+            [100_000_000_000, 33_333, 100_000_000_000, 33_333],
+            [5, 1, 2, 3],                                                          // 2.5 -> 3 (half up)
+            [7, 1, 2, 4],
+            [1, 1, 3, 0],
+            [2, 1, 3, 1],
+            [0, 123_456_789, 7, 0],
+            [123_456_789_012, 987_654_321_098, 555_555_555_555, 219_478_736_046],
+        ];
+        foreach ($cases as [$a, $b, $d, $want]) {
+            $this->assertSame($want, Money::mulDivRound($a, $b, $d), "$a*$b/$d");
+        }
+    }
+
+    public function testRatioTaxOnVeryLargeAmountsDoesNotOverflowOrGoFloat(): void
+    {
+        // taxable ₦9.99bn, stored tax/base ratio of an "unusual" old sale: the intermediate product is ~1e23
+        $taxable = Money::ofMinor(999_000_000_000);
+        $r = $taxable->mulRatio(9_999_999_999, 9_999_999_999);
+        $this->assertSame(999_000_000_000, $r->minor);
+        $half = $taxable->mulRatio(4_999_999_999, 9_999_999_999);
+        $this->assertSame(499_499_999_950, $half->minor, 'exact: 999,000,000,000 × 4,999,999,999 / 9,999,999,999');
+    }
 }

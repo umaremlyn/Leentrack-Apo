@@ -36,7 +36,7 @@ final class TenantRepository
         foreach ($fields as $k => $v) {
             if (!in_array($k, $allowed, true)) { throw new \LogicException("Column $k is not updatable here."); }
             $sets[] = "`$k` = ?";
-            $vals[] = $v;
+            $vals[] = is_bool($v) ? (int) $v : $v;   // PDO would send false as '' and MySQL strict mode rejects it
         }
         if (!$sets) { return; }
         $vals[] = $id;
@@ -119,7 +119,7 @@ final class TenantRepository
         foreach ($fields as $k => $v) {
             if (!in_array($k, $allowed, true)) { throw new \LogicException("Column $k is not updatable here."); }
             $sets[] = "`$k` = ?";
-            $vals[] = $v;
+            $vals[] = is_bool($v) ? (int) $v : $v;   // PDO would send false as '' and MySQL strict mode rejects it
         }
         if (!$sets) { return; }
         array_push($vals, $businessId, $memberId);
@@ -194,7 +194,7 @@ final class TenantRepository
         foreach ($fields as $k => $v) {
             if (!in_array($k, $allowed, true)) { throw new \LogicException("Column $k is not updatable here."); }
             $sets[] = "`$k` = ?";
-            $vals[] = $v;
+            $vals[] = is_bool($v) ? (int) $v : $v;   // PDO would send false as '' and MySQL strict mode rejects it
         }
         if (!$sets) { return; }
         array_push($vals, $businessId, $id);

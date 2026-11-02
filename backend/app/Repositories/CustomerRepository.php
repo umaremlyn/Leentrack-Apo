@@ -79,7 +79,7 @@ final class CustomerRepository
         foreach ($fields as $k => $v) {
             if (!in_array($k, $allowed, true)) { throw new \LogicException("Column $k is not updatable here."); }
             $sets[] = "`$k` = ?";
-            $vals[] = $v;
+            $vals[] = is_bool($v) ? (int) $v : $v;   // PDO would send false as '' and MySQL strict mode rejects it
         }
         if (!$sets) { return; }
         array_push($vals, $bid, $id);
@@ -94,6 +94,13 @@ final class CustomerRepository
     public function setPoints(string $bid, string $id, int $points): void
     {
         $this->pdo->prepare('UPDATE customers SET loyalty_points = ? WHERE business_id = ? AND id = ?')->execute([$points, $bid, $id]);
+    }
+
+    /** Called only by sale/repayment code, inside its transaction, after lockCustomer(). total_spent = money RECEIVED (docs G-12). */
+    public function adjustStats(string $bid, string $id, string $spentDelta, int $visitDelta, ?string $lastVisit): void
+    {
+        $this->pdo->prepare('UPDATE customers SET total_spent = GREATEST(0, total_spent + ?), visit_count = GREATEST(0, visit_count + ?), last_visit = COALESCE(?, last_visit) WHERE business_id = ? AND id = ?')
+            ->execute([$spentDelta, $visitDelta, $lastVisit, $bid, $id]);
     }
 
     // ---------------------------------------------------------------- groups

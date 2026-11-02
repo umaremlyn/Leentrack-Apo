@@ -133,7 +133,7 @@ final class CatalogRepository
     /** @return array<string,mixed>|null row-locked for the rest of the transaction */
     public function lockProduct(string $bid, string $id): ?array
     {
-        $st = $this->pdo->prepare('SELECT id,item_type,stock_quantity,archived_at,is_active,name FROM products WHERE business_id = ? AND id = ? FOR UPDATE');
+        $st = $this->pdo->prepare('SELECT id,item_type,stock_quantity,archived_at,is_active,name,selling_price,cost_price FROM products WHERE business_id = ? AND id = ? FOR UPDATE');
         $st->execute([$bid, $id]);
         return $st->fetch() ?: null;
     }
@@ -170,7 +170,7 @@ final class CatalogRepository
         foreach ($fields as $k => $v) {
             if (!in_array($k, $allowed, true)) { throw new \LogicException("Column $k is not updatable here."); }
             $sets[] = "`$k` = ?";
-            $vals[] = $v;
+            $vals[] = is_bool($v) ? (int) $v : $v;   // PDO would send false as '' and MySQL strict mode rejects it
         }
         if (!$sets) { return; }
         array_push($vals, $bid, $id);

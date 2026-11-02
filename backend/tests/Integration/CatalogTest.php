@@ -153,6 +153,22 @@ final class CatalogTest extends ApiTestCase
         $this->assertSame(10, $j['data']['stock_quantity']);
     }
 
+    /** Regression: PATCH {is_active:false} used to return 500 (PDO sent the boolean as an empty string). */
+    public function testSwitchingAProductOffAndOnWorksAndHidesItFromActiveFilter(): void
+    {
+        $o = $this->owner();
+        $p = $this->product($o);
+        [$s, $j] = $this->call('PATCH', '/products/' . $p['id'], ['is_active' => false], $o['token'], $o['business_id']);
+        $this->assertSame([200, false], [$s, $j['data']['is_active']]);
+        [, $l] = $this->call('GET', '/products?active=1', null, $o['token'], $o['business_id']);
+        $this->assertSame([], $l['data']);
+        [$s, $j] = $this->call('PATCH', '/products/' . $p['id'], ['is_active' => true], $o['token'], $o['business_id']);
+        $this->assertSame([200, true], [$s, $j['data']['is_active']]);
+        $loc = $this->call('POST', '/locations', ['name' => 'Annex'], $o['token'], $o['business_id'])[1]['data']['id'];
+        [$s, $j] = $this->call('PATCH', "/locations/$loc", ['is_active' => false], $o['token'], $o['business_id']);
+        $this->assertSame([200, false], [$s, $j['data']['is_active']], 'locations had the same hazard');
+    }
+
     public function testConvertingProductWithStockToServiceIsRefused(): void
     {
         $o = $this->owner();

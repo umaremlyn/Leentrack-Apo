@@ -14,6 +14,7 @@ return [
     'cors_origins' => array_values(array_filter(array_map('trim', explode(',', (string) Env::get('CORS_ALLOWED_ORIGINS', ''))))),
     'trusted_proxies' => array_values(array_filter(array_map('trim', explode(',', (string) Env::get('TRUSTED_PROXIES', ''))))),
     'rate_limit_enabled' => Env::bool('RATE_LIMIT_ENABLED', true),
+    'enforce_sales_limit' => Env::bool('ENFORCE_SALES_LIMIT', false),   // the source only showed a banner; blocking the till is an owner decision (G-29)
     'web_url' => rtrim((string) Env::get('WEB_URL', ''), '/'),
     'mail_from' => Env::get('MAIL_FROM', 'LeenTrack <no-reply@localhost>'),
     'auth' => [

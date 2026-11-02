@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 use LeenTrack\Core\{Lazy, Router};
-use LeenTrack\Http\Controllers\{AdminController, AuthController, BusinessController, CatalogController, CustomerController, HealthController, LocationController, MeController, StaffController};
+use LeenTrack\Http\Controllers\{AdminController, AuthController, BusinessController, CatalogController, CustomerController, HealthController, SaleController, LocationController, MeController, StaffController};
 use LeenTrack\Services\Container;
 
 /**
@@ -18,6 +18,7 @@ return static function (Router $r, Container $c): void {
     $loc = new Lazy(fn () => new LocationController($c->locations()));
     $cat = new Lazy(fn () => new CatalogController($c->categories(), $c->products(), $c->productImport(), $c->stock()));
     $cust = new Lazy(fn () => new CustomerController($c->customers(), $c->customerGroups(), $c->loyalty()));
+    $sale = new Lazy(fn () => new SaleController($c->sales(), $c->branding()));
     $admin = new Lazy(fn () => new AdminController($c->app()));
 
     $r->get('/health', [$health, 'show'], [], true);
@@ -88,6 +89,16 @@ return static function (Router $r, Container $c): void {
     $r->delete('/customer-groups/{id}', [$cust, 'groupDelete'], ['auth', 'tenant']);
     $r->get('/businesses/{id}/loyalty-settings', [$cust, 'loyaltyShow'], ['auth', 'tenant:path']);
     $r->put('/businesses/{id}/loyalty-settings', [$cust, 'loyaltySave'], ['auth', 'tenant:path']);
+
+    // --- sales, documents, branding ---
+    $r->post('/sales', [$sale, 'checkout'], ['auth', 'tenant', 'throttle:120,60']);
+    $r->get('/sales', [$sale, 'index'], ['auth', 'tenant']);
+    $r->get('/sales/{id}', [$sale, 'show'], ['auth', 'tenant']);
+    $r->get('/sales/{id}/document', [$sale, 'document'], ['auth', 'tenant']);
+    $r->post('/sales/{id}/edit', [$sale, 'edit'], ['auth', 'tenant', 'throttle:60,60']);
+    $r->post('/sales/{id}/void', [$sale, 'void'], ['auth', 'tenant', 'throttle:30,60']);
+    $r->get('/businesses/{id}/branding', [$sale, 'brandingShow'], ['auth', 'tenant:path']);
+    $r->put('/businesses/{id}/branding', [$sale, 'brandingSave'], ['auth', 'tenant:path']);
 
     // --- platform administration ---
     $r->get('/admin/stats', [$admin, 'stats'], ['auth', 'platform_admin']);

@@ -58,6 +58,13 @@ MySQL-backed fixed window (`rate_limits`), usable on shared hosting. Applied per
 | D-26 | The sale transaction (3c) must lock the customer row `FOR UPDATE` **before** inserting the sale; `LoyaltyService` re-locks (no-op) and refuses to run outside a transaction | MySQL's FK check takes a shared lock on the customer row; two concurrent sales would both hold it and deadlock when loyalty tries to update. (Postgres avoided this with `FOR NO KEY UPDATE`; MySQL has no equivalent.) |
 | D-27 | Customers are archived, never deleted (sales, repayments and the points ledger reference them); archived customers keep their points | the source's hard delete set `sales.customer_id` to NULL, silently orphaning financial history |
 | D-28 | No endpoint accepts `loyalty_points`, `total_spent`, `visit_count`, `last_visit`; they change only inside `LoyaltyService` / the sale service, each change with an append-only ledger row | the source needed triggers to stop cashiers editing points; here there is simply no write path |
+| D-29 | `customers.total_spent` = money actually received (checkout payment + later repayments ± edits/voids), not billed totals | consistent with loyalty (earned on money received); resolves G-12 |
+| D-30 | Global lock order: customer row → sale row → product rows (ascending id) → stock level rows; the receipt-number counter is touched last | every flow follows it, so concurrent checkouts/edits/voids cannot deadlock; verified by a 6-process opposite-order test |
+| D-31 | Idempotency: `UNIQUE(business_id, client_operation_id)` + SHA-256 of the request; the sale row is inserted BEFORE stock is touched; a replay returns the original sale (200, `meta.replayed=true`), same id with different content is 409 | safe retries and offline sync; verified with 8 parallel identical submissions |
+| D-32 | The plan's sales limit is opt-in (`ENFORCE_SALES_LIMIT`), default off; `meta.sales_limit_reached` lets clients show the source's banner | the source never blocked the till; blocking existing free-plan customers at cutover is an owner decision (G-29) |
+| D-33 | `sale_items` snapshot product name, type and unit cost | receipts and profit stay true after renames, archiving or cost changes |
+| D-34 | Money ceiling raised to ₦10bn and `Money::mulRatio` is exact for any inputs (big-number fallback) | ratio tax on very large sales multiplied two cent amounts beyond 64 bits and PHP would have silently used a float |
+| D-35 | Receipt numbers are `SALE-YYYYMMDD-NNNNNN` from a per-business counter, allocated last in the transaction | server-issued, sequential, unforgeable (S-12); the source's `SALE-<ms>-<rand>` was client-made |
 
 ## Phase 2 additions
 * **Schema:** migrations `0002_identity` (users, user_profiles, auth_sessions, user_tokens, platform_admins) and `0003_tenancy` (businesses, locations, business_members, member_outlets, audit_logs).
@@ -77,3 +84,9 @@ MySQL-backed fixed window (`rate_limits`), usable on shared hosting. Applied per
 * **Pure maths:** `LoyaltyMath::checkoutDiscounts` (port of `lib/loyalty/math.ts`) and `LoyaltyMath::earn` (port of SQL `loyalty_apply`), exact integer-cent arithmetic via `Money::floorDiv`.
 * **Services:** `CustomerService`, `CustomerGroupService`, `LoyaltyService` (settings, `apply`, `redeem`; both mutate only inside a transaction).
 * **Golden parity:** `tools/golden/gen_loyalty.mjs` runs the unmodified original TS and writes `tests/Golden/loyalty_checkout.json` (2,268 cases covering the 99% cap, the manual-discount error, point limits and fractional point values).
+
+## Phase 3c additions
+* **Schema:** `0006_sales` (sales, sale_items with snapshots, debt_repayments [endpoints in 3d], sale_edits, document_sequences, FK `loyalty_ledger.sale_id`), `0007_branding`.
+* **`SaleService`:** `checkout` (server computes every figure; only item ids/quantities, discount choices and payment are accepted — any price/total/tax field is a 422), `list`, `get`, `document`, `edit` (port of `edit_sale`), `void`.
+* **Pure ports with golden tests against the original TypeScript:** `Sales\EditMath` (`lib/sales/edit-math.ts`, 700 cases), `Documents\DocumentModel` + `DocumentBuilder` (`lib/documents/model.ts`, `build.ts`).
+* **Money:** ceiling ₦10bn; `Money::mulDivRound` exact big-number fallback.

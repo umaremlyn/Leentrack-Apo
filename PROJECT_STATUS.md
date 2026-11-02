@@ -1,6 +1,6 @@
 # LeenTrack Rebuild — Project Status
 
-_Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current phase: **Phase 3 — Business operations: 3a ✅ · 3b (customers, groups, loyalty) COMPLETE; 3c (POS/sales/documents) next**_
+_Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current phase: **Phase 3 — Business operations: 3a ✅ · 3b ✅ · 3c (POS, sales, documents) COMPLETE; 3d (credit & repayments) next**_
 
 ## Ground rules in force
 * Production (Vercel + Supabase) is **never touched**. `umaremlyn/Track` is read-only to this project (verified unmodified).
@@ -14,8 +14,39 @@ _Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current
 | 0 Source audit | ✅ docs 01–10 |
 | 1 Foundation | ✅ backend skeleton + migrator + rate limiter + Money; Flutter scaffold + adaptive shell + API client; docs 11–12 |
 | 2 Database & core (auth, tenancy, policies) | ✅ identity + tenancy + authorization + plan guard + audit; deployment guide drafted |
-| 3 Business operations | 🔶 3a catalogue & stock ✅ · 3b customers/groups/loyalty ✅ · 3c POS/sales/documents ⏳ next · 3d credit · 3e expenses/profit/dashboard · 3f suppliers/purchases · 3g transfers · 3h reports · 3i staff extras/account lifecycle · 3j billing · 3k admin · 3l settings/branding/cron |
+| 3 Business operations | 🔶 3a catalogue & stock ✅ · 3b customers/groups/loyalty ✅ · 3c POS/sales/documents ✅ · 3d credit ⏳ next · 3e expenses/profit/dashboard · 3f suppliers/purchases · 3g transfers · 3h reports · 3i staff extras/account lifecycle · 3j billing · 3k admin · 3l settings/branding/cron |
 | 4–10 | ⏳ not started |
+
+## Session 6 report (Phase 3c — POS, sales, documents)
+**Completed**
+* Migrations `0006_sales` (sales, sale_items with name/type/cost snapshots, debt_repayments [schema only; endpoints in 3d], sale_edits, document_sequences, FK `loyalty_ledger.sale_id`) and `0007_branding`.
+* `POST /sales` (checkout): the client sends only item ids + quantities, discount choices and how the customer pays. The server computes prices, group/manual/points discounts, tax, total, change, balance, status, receipt number; any money field in the request is a 422 (closes S-03, S-12, S-13). Per-outlet stock via `StockService`, customer stats, loyalty earn/redeem, all in one transaction. Idempotent by `client_operation_id`.
+* `GET /sales` (local-day filters, status/payment/customer/outlet/search, summary excluding voided), `GET /sales/{id}` (profit/cost only with permission), `POST /sales/{id}/edit` (port of `edit_sale`), `POST /sales/{id}/void` (restores stock, reverses spend/visit/points), `GET /sales/{id}/document` (receipt/invoice model, share text, WhatsApp number), `GET|PUT /businesses/{id}/branding`.
+* Pure ports checked against the original TypeScript: `EditMath` (`lib/sales/edit-math.ts`), `DocumentModel`/`DocumentBuilder` (`lib/documents/model.ts`, `build.ts`). `tools/golden/gen_sales.mjs` generates the vectors by running the unmodified originals.
+* `Money`: ceiling raised to ₦10bn and `mulRatio` made exact for any inputs (found while testing: ratio tax on very large sales multiplied two cent amounts beyond 64 bits and PHP would have silently used a float).
+* ADRs D-29…D-35, gaps G-29…G-33.
+
+**Tests executed (actual results)**
+| Suite | Result |
+|---|---|
+| `vendor/bin/phpunit` (unit + golden + MySQL 8.4.6 integration) | **OK — 177 tests, 45,181 assertions** |
+| Golden vs original TypeScript | edit maths **700/700**; documents (10 sales + 2 payment documents), `documentNumber`, `statusFor`, `paymentMethodLabel`, `whatsappNumber`, `money`, `fileNameFor`, `titleFor` and all 5 share messages **character-for-character identical**; loyalty/discount 2,268/2,268 (still) |
+| Parallel processes (real concurrent requests through the full Kernel) | 8 identical submissions → exactly 1 sale, stock taken once; 8 devices racing for 5 units → 5 sold / 3 refused (`insufficient_stock`), unique receipt numbers; 6 workers × 5 sales in opposite product order on one customer → 30/30 succeeded, no deadlock |
+| Deterministic lock-order test | holds the higher product id and proves the checkout takes the lower id first; passes on the real code, **fails 3/3 when the sort is removed** |
+| Mutation check (15 deliberate breakages: tax base, short payment, idempotency hash, lock order, customer lock, void stock restore, stale-screen check, edit/void permissions, outlet restriction, cost visibility, points cap, edit tolerance, document status label, logo signature check) | **14 caught on the first run; 1 survived (lock order — the deadlock retry hid it) → fixed by the new deterministic test.** One mutation of mine was malformed (failed for the wrong reason); redone correctly and caught for the right reason |
+| Invariants asserted after every scenario | stock = Σ levels = Σ movements; sale subtotal = Σ items; total = subtotal − discount + tax; loyalty points = Σ ledger |
+
+**Defect found by the new tests (fixed, regression test added):** since Phase 3a, `PATCH /products/{id}` with `{"is_active": false}` returned **500** (PDO sent the boolean as an empty string under MySQL strict mode); locations had the same hazard. Every dynamic-update helper now casts booleans. The 3a tests had only created inactive products, never edited the flag.
+
+**Security findings closed (by test):** S-03 (checkout authorization/tenant scoping — no unauthenticated-in-effect `SECURITY DEFINER` function; business and user come from the token), S-12 (server-issued receipt numbers), S-13 (client totals/prices refused), S-09 partly (duplicate and racing submissions are now idempotent server-side; the offline queue protocol itself is Phase 4), S-11 partly (sales are never deleted: edit keeps history, void keeps the record).
+
+**Not done / not verified**
+* **Repayments** (record a payment on a credit sale, customer statement, debt list, "owes money ⇒ cannot archive") are 3d. Table and the edit/void arithmetic already account for repayments, but no endpoint creates them yet, so those code paths are exercised only with seeded rows.
+* **Server-side PDF** (G-31), a **till/drawer ledger** for refunds (G-32), refunds as a distinct state (only void).
+* The sales **plan limit is opt-in** (G-29) pending the owner's decision.
+* Receipt `change_amount` and `payment_method_raw` handling for legacy rows will be settled in the importer (Phase 8).
+* The Flutter and web clients still do not call any of this.
+* Throughput note: the per-business receipt counter row is locked for the tail of every checkout, serialising sales of one business briefly; fine for shop volumes, to be load-tested in Phase 9.
 
 ## Session 5 report (Phase 3b — customers, groups, loyalty)
 **Completed**
@@ -128,4 +159,4 @@ _Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current
 G-01 schema-only dump · G-02 data + `auth.users` export (only when ready for rehearsal) · G-03 which of 016–019 are applied · G-09 Flutterwave confirmation · G-10 SMS gateway · G-16 Truehost PHP facts (`phpinfo`) — and a **review of S-01/S-03/S-04/S-06 against the live project**, independent of this rebuild.
 
 ## Exact next task
-Phase 3c — POS, sales, documents (the highest-risk module; closes S-03, S-09 partly, S-12, S-13): migration `0006` (`sales`, `sale_items` with `unit_cost` snapshot, `sale_payments`, `debt_repayments` schema prepared for 3d, `sale_edits`, `document_sequences`, FK from `loyalty_ledger.sale_id`), `SaleService::checkout` (server-side recomputation of every figure from the catalogue — the client sends only item ids and quantities, discount choices and payment; customer row locked first per D-26; stock via `StockService::applyDelta`; group/manual/points discounts via `LoyaltyMath`; tax from the business; credit-sale rules; loyalty earn/redeem; `total_spent`/`visit_count`/`last_visit`; unique server-issued receipt number; idempotency via `client_operation_id`), sale list/detail, `edit` (port of `edit_sale`, golden vectors from `lib/sales/edit-math.ts`), void, and the receipt/invoice document model (`lib/documents/model.ts` golden tests). Tests T-POS-1…6, T-EDIT-1…8, duplicate-sale concurrency (parallel identical `client_operation_id`), oversell race, S-XBIZ everywhere.
+Phase 3d — credit & repayments: `POST /sales/{id}/repayments` (atomic: lock customer → sale; amount ≤ balance; immutable rows; sale becomes `completed` at zero; loyalty earn on money received; customer `total_spent`; idempotent by `client_operation_id`; payment receipt document via the already-ported `fromPayment`), `GET /credit` (open/overdue, per-customer totals, 30-day overdue rule), `GET /customers/{id}/debt` and `/statement`, `GET /customers/{id}/sales`, and the "customer who owes money cannot be archived" guard. Tests: T-CRED-1 (bounds, over-payment rejected, concurrent repayments cannot exceed the balance — parallel processes), balance arithmetic against `credit/page.tsx` semantics, statement correctness, payment-document golden (already covered), S-XBIZ on every route, and exercising the edit/void paths against real repayment rows (S-10).

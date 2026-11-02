@@ -102,6 +102,19 @@ final class LoyaltyService
         return $after;
     }
 
+    /** Gives back points that a voided sale had spent. Same transaction rules as redeem(). Returns the balance afterwards. */
+    public function returnPoints(string $bid, string $customerId, ?string $saleId, int $points, string $note, ?string $actor): int
+    {
+        $this->assertInTransaction();
+        if ($points <= 0) { throw new \InvalidArgumentException('Points must be positive.'); }
+        $c = $this->repo->lockCustomer($bid, $customerId);
+        if ($c === null) { return 0; }
+        $after = (int) $c['loyalty_points'] + $points;
+        $this->repo->setPoints($bid, $customerId, $after);
+        $this->repo->insertLedger($bid, $customerId, $saleId, 'earn', '0.00', $points, $this->repo->lastProgress($customerId), $after, null, null, $note, $actor);
+        return $after;
+    }
+
     private function assertInTransaction(): void
     {
         if (!$this->pdo->inTransaction()) { throw new \LogicException('Loyalty changes must run inside the sale transaction.'); }

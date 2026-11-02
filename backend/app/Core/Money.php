@@ -6,12 +6,13 @@ namespace LeenTrack\Core;
 /**
  * Exact money arithmetic in integer minor units (2 dp), no floats, no bcmath/gmp needed (Truehost-safe).
  * Rounding: half away from zero (equals the source's Math.round for non-negative amounts).
- * Hard ceiling 1e11 minor units (= 1,000,000,000.00, the source's own "total too large" limit) so that
- * ratio multiplications cannot overflow a 64-bit int.
+ * Hard ceiling 1e12 minor units (= 10,000,000,000.00; the source rejected sale subtotals above 1,000,000,000 and a total can
+ * be a little higher after tax). Products of two amounts can exceed 64 bits, so mulRatio() falls back to exact big-number
+ * arithmetic instead of letting PHP silently turn the product into a float.
  */
 final class Money
 {
-    public const MAX_MINOR = 100_000_000_000;
+    public const MAX_MINOR = 1_000_000_000_000;      // 10,000,000,000.00
 
     private function __construct(public readonly int $minor)
     {
@@ -58,16 +59,56 @@ final class Money
     public function max(self $o): self { return $this->minor >= $o->minor ? $this : $o; }
     public function min(self $o): self { return $this->minor <= $o->minor ? $this : $o; }
 
-    /** this × (num/den), rounded half away from zero. e.g. percent: mulRatio(750, 10000) = 7.5 %. */
+    /** this × (num/den), rounded half away from zero. e.g. percent: mulRatio(750, 10000) = 7.5 %. Exact for any inputs. */
     public function mulRatio(int $num, int $den): self
     {
         if ($den <= 0) {
             throw new \DivisionByZeroError();
         }
-        $n = $this->minor * $num;
-        $neg = $n < 0;
-        $q = intdiv(abs($n) * 2 + $den, $den * 2);   // round half up on magnitude
+        $neg = ($this->minor < 0) !== ($num < 0) && $this->minor !== 0 && $num !== 0;
+        $q = self::mulDivRound(abs($this->minor), abs($num), $den);
         return self::ofMinor($neg ? -$q : $q);
+    }
+
+    /** round-half-up( a * b / d ) for non-negative ints, never overflowing: fast path in int64, schoolbook big-number otherwise. */
+    public static function mulDivRound(int $a, int $b, int $d): int
+    {
+        if ($a === 0 || $b === 0) {
+            return 0;
+        }
+        // fast path only when a*b*2 + d provably fits in a signed 64-bit int
+        if ($b <= intdiv(PHP_INT_MAX, 4) && $a <= intdiv(PHP_INT_MAX - $d, 2 * $b)) {
+            return intdiv($a * $b * 2 + $d, $d * 2);
+        }
+        // slow path: decimal-string product, then long division by $d (remainder stays < $d <= ~1e12, so r*10+digit fits in int64)
+        $x = strrev((string) $a);
+        $y = strrev((string) $b);
+        $prod = array_fill(0, strlen($x) + strlen($y), 0);
+        for ($i = 0, $n = strlen($x); $i < $n; $i++) {
+            for ($j = 0, $m = strlen($y); $j < $m; $j++) {
+                $prod[$i + $j] += ((int) $x[$i]) * ((int) $y[$j]);
+            }
+        }
+        $carry = 0;
+        foreach ($prod as $k => $v) {
+            $v += $carry;
+            $prod[$k] = $v % 10;
+            $carry = intdiv($v, 10);
+        }
+        $digits = rtrim(implode('', array_reverse($prod)), '');
+        $digits = ltrim($digits, '0') ?: '0';
+        $quot = 0;
+        $rem = 0;
+        for ($i = 0, $n = strlen($digits); $i < $n; $i++) {
+            $rem = $rem * 10 + (int) $digits[$i];
+            $qd = intdiv($rem, $d);
+            $rem -= $qd * $d;
+            $quot = $quot * 10 + $qd;
+            if ($quot > self::MAX_MINOR * 10) {
+                throw new \OverflowException('Amount too large.');
+            }
+        }
+        return $rem * 2 >= $d ? $quot + 1 : $quot;
     }
 
     /** Percent given as a decimal string with ≤2 dp ("7.5", "10", "0.25"). */
