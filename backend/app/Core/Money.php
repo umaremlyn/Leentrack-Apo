@@ -80,6 +80,16 @@ final class Money
         return $this->mulRatio($bp, 10_000);
     }
 
+    /** floor(this / other) as a whole number, exact (no floats). Works for negative dividends (rounds toward −∞, like SQL FLOOR). */
+    public function floorDiv(self $o): int
+    {
+        if ($o->minor <= 0) {
+            throw new \DivisionByZeroError();
+        }
+        $q = intdiv($this->minor, $o->minor);
+        return ($this->minor % $o->minor !== 0 && $this->minor < 0) ? $q - 1 : $q;
+    }
+
     /** "1500.50" */
     public function toString(): string
     {

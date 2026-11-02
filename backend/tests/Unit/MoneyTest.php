@@ -87,4 +87,18 @@ final class MoneyTest extends TestCase
         $this->assertSame('2.50', $a->min($b)->toString());
         $this->assertSame('0.00', Money::zero()->toString());
     }
+
+    public function testFloorDivIsExactAndFloorsTowardMinusInfinity(): void
+    {
+        $m = fn (string $x) => Money::parse($x);
+        $this->assertSame(3, $m('0.30')->floorDiv($m('0.10')), 'floats give 2.9999999999999996 -> 2; exact cents give 3');
+        $this->assertSame(0, $m('9999.99')->floorDiv($m('10000')));
+        $this->assertSame(5, $m('50000')->floorDiv($m('10000')));
+        $this->assertSame(-1, Money::ofMinor(-1)->floorDiv($m('10000')));
+        $this->assertSame(-1, $m('-10000')->floorDiv($m('10000')));
+        $this->assertSame(-2, $m('-10000.01')->floorDiv($m('10000')));
+        $this->assertSame(0, Money::zero()->floorDiv($m('1')));
+        $this->expectException(\DivisionByZeroError::class);
+        $m('5')->floorDiv(Money::zero());
+    }
 }

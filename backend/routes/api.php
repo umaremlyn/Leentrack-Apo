@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 use LeenTrack\Core\{Lazy, Router};
-use LeenTrack\Http\Controllers\{AdminController, AuthController, BusinessController, CatalogController, HealthController, LocationController, MeController, StaffController};
+use LeenTrack\Http\Controllers\{AdminController, AuthController, BusinessController, CatalogController, CustomerController, HealthController, LocationController, MeController, StaffController};
 use LeenTrack\Services\Container;
 
 /**
@@ -17,6 +17,7 @@ return static function (Router $r, Container $c): void {
     $staff = new Lazy(fn () => new StaffController($c->staff()));
     $loc = new Lazy(fn () => new LocationController($c->locations()));
     $cat = new Lazy(fn () => new CatalogController($c->categories(), $c->products(), $c->productImport(), $c->stock()));
+    $cust = new Lazy(fn () => new CustomerController($c->customers(), $c->customerGroups(), $c->loyalty()));
     $admin = new Lazy(fn () => new AdminController($c->app()));
 
     $r->get('/health', [$health, 'show'], [], true);
@@ -72,6 +73,21 @@ return static function (Router $r, Container $c): void {
     $r->get('/stock/levels', [$cat, 'stockLevels'], ['auth', 'tenant']);
     $r->get('/stock/movements', [$cat, 'stockMovements'], ['auth', 'tenant']);
     $r->get('/stock/valuation', [$cat, 'stockValuation'], ['auth', 'tenant']);
+
+    // --- customers, groups, loyalty ---
+    $r->get('/customers', [$cust, 'index'], ['auth', 'tenant']);
+    $r->post('/customers', [$cust, 'create'], ['auth', 'tenant']);
+    $r->get('/customers/{id}', [$cust, 'show'], ['auth', 'tenant']);
+    $r->patch('/customers/{id}', [$cust, 'update'], ['auth', 'tenant']);
+    $r->delete('/customers/{id}', [$cust, 'archive'], ['auth', 'tenant']);
+    $r->post('/customers/{id}/restore', [$cust, 'restore'], ['auth', 'tenant']);
+    $r->get('/customers/{id}/loyalty-ledger', [$cust, 'ledger'], ['auth', 'tenant']);
+    $r->get('/customer-groups', [$cust, 'groupIndex'], ['auth', 'tenant']);
+    $r->post('/customer-groups', [$cust, 'groupCreate'], ['auth', 'tenant']);
+    $r->patch('/customer-groups/{id}', [$cust, 'groupUpdate'], ['auth', 'tenant']);
+    $r->delete('/customer-groups/{id}', [$cust, 'groupDelete'], ['auth', 'tenant']);
+    $r->get('/businesses/{id}/loyalty-settings', [$cust, 'loyaltyShow'], ['auth', 'tenant:path']);
+    $r->put('/businesses/{id}/loyalty-settings', [$cust, 'loyaltySave'], ['auth', 'tenant:path']);
 
     // --- platform administration ---
     $r->get('/admin/stats', [$admin, 'stats'], ['auth', 'platform_admin']);

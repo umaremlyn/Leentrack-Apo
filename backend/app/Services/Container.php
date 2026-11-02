@@ -9,6 +9,7 @@ use LeenTrack\Mail\FileMailer;
 use LeenTrack\Mail\Mailer;
 use LeenTrack\Mail\NativeMailer;
 use LeenTrack\Repositories\CatalogRepository;
+use LeenTrack\Repositories\CustomerRepository;
 use LeenTrack\Repositories\SessionRepository;
 use LeenTrack\Repositories\TenantRepository;
 use LeenTrack\Repositories\UserRepository;
@@ -71,6 +72,11 @@ final class Container
     public function categories(): CategoryService { return $this->once('cats', fn () => new CategoryService($this->catalog(), $this->audit())); }
     public function products(): ProductService { return $this->once('prods', fn () => new ProductService($this->app->pdo(), $this->catalog(), $this->stock(), $this->audit())); }
     public function productImport(): ProductImportService { return $this->once('pimport', fn () => new ProductImportService($this->app->pdo(), $this->catalog(), $this->stock(), $this->audit())); }
+
+    public function customerRepo(): CustomerRepository { return $this->once('custRepo', fn () => new CustomerRepository($this->app->pdo())); }
+    public function loyalty(): LoyaltyService { return $this->once('loyalty', fn () => new LoyaltyService($this->app->pdo(), $this->customerRepo(), $this->audit())); }
+    public function customers(): CustomerService { return $this->once('custs', fn () => new CustomerService($this->customerRepo(), $this->audit())); }
+    public function customerGroups(): CustomerGroupService { return $this->once('groups', fn () => new CustomerGroupService($this->customerRepo(), $this->audit())); }
 
     public function locations(): LocationService { return $this->once('loc', fn () => new LocationService($this->tenants(), $this->audit())); }
     public function me(): MeService { return $this->once('me', fn () => new MeService($this->users(), $this->tenants(), $this->sessionsRepo(), $this->auth(), $this->audit())); }

@@ -6,7 +6,7 @@ namespace LeenTrack\Services;
 /** Server-side permission matrix (docs/07 §2). Roles come ONLY from business_members. */
 final class Permissions
 {
-    private const ALL_MEMBERS = ['sales.create', 'sales.read', 'customers.read', 'customers.create', 'products.read', 'business.read', 'locations.read'];
+    private const ALL_MEMBERS = ['sales.create', 'sales.read', 'customers.read', 'customers.create', 'products.read', 'business.read', 'locations.read', 'groups.read', 'loyalty.read'];
     private const MANAGER_EXTRA = [
         'sales.edit', 'sales.void', 'customers.update', 'customers.delete', 'groups.write',
         'products.write', 'stock.adjust', 'categories.write', 'purchases.manage', 'suppliers.manage',

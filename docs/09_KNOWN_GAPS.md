@@ -20,6 +20,10 @@ Each item: what is missing, why it matters, what I did/will do meanwhile, and wh
 | G-22 | **Mail transport.** Production default is PHP `mail()` via the host's sendmail (no SPF/DKIM guarantee). Source used Resend. | Verification/reset mails may land in spam | `Mailer` interface ready for SMTP/Resend | Owner: choose SMTP/Resend and set up SPF/DKIM |
 | G-23 | **Client edit forms must change.** The web/Flutter product edit form sends `stock_quantity`; the API now rejects it. Clients must call `/stock/adjustments` (with a reason) when stock is edited. | Phase 7 web refactor must split the form submit into PATCH + adjustment | API contract documented | — |
 | G-24 | Source CSV import has no plan-limit check and accepts duplicate barcodes; the API enforces both. Imports that "worked" before may now be refused. | Behaviour change (security/consistency fix) | Row-level messages explain why | Owner awareness |
+| G-25 | **Who may edit customer groups.** Source is contradictory: migration 018 says "owner-only (unchanged)" but the live policy from 011 lets any business member write. | Cashiers could (or could not) change discounts | Implemented owner + manager; cashiers read-only (they need the discount at checkout) | Owner confirmation |
+| G-26 | The original maths uses floating point; PHP uses exact cents. 2,268 golden cases matched exactly, but a rare float artefact (e.g. `0.30 / 0.10 = 2.9999…`) would make the TS give 2 points where exact maths gives 3. | ≤1 point / 1 cent on freak inputs | Exact result is authoritative; documented in `MoneyTest` | — |
+| G-27 | No duplicate detection for customers (same phone/e-mail twice). The source allowed duplicates. | Messy lists | Not enforced; a merge tool is a future feature | Owner decision |
+| G-28 | `total_spent`, `visit_count`, `last_visit` stay 0 for new customers until the sale service (3c) maintains them; imported values are kept as-is. | Customer stats incomplete until 3c | Scheduled | — |
 
 ## B. Semantics the source leaves ambiguous (owner decisions)
 

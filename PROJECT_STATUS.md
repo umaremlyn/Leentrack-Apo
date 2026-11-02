@@ -1,6 +1,6 @@
 # LeenTrack Rebuild — Project Status
 
-_Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current phase: **Phase 3 — Business operations: 3a (catalogue & stock) COMPLETE; 3b (customers/groups/loyalty) next**_
+_Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current phase: **Phase 3 — Business operations: 3a ✅ · 3b (customers, groups, loyalty) COMPLETE; 3c (POS/sales/documents) next**_
 
 ## Ground rules in force
 * Production (Vercel + Supabase) is **never touched**. `umaremlyn/Track` is read-only to this project (verified unmodified).
@@ -14,8 +14,36 @@ _Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current
 | 0 Source audit | ✅ docs 01–10 |
 | 1 Foundation | ✅ backend skeleton + migrator + rate limiter + Money; Flutter scaffold + adaptive shell + API client; docs 11–12 |
 | 2 Database & core (auth, tenancy, policies) | ✅ identity + tenancy + authorization + plan guard + audit; deployment guide drafted |
-| 3 Business operations | 🔶 3a catalogue & stock ✅ · 3b customers/groups/loyalty ⏳ next · 3c POS/sales/documents · 3d credit · 3e expenses/profit/dashboard · 3f suppliers/purchases · 3g transfers · 3h reports · 3i staff extras/account lifecycle · 3j billing · 3k admin · 3l settings/branding/cron |
+| 3 Business operations | 🔶 3a catalogue & stock ✅ · 3b customers/groups/loyalty ✅ · 3c POS/sales/documents ⏳ next · 3d credit · 3e expenses/profit/dashboard · 3f suppliers/purchases · 3g transfers · 3h reports · 3i staff extras/account lifecycle · 3j billing · 3k admin · 3l settings/branding/cron |
 | 4–10 | ⏳ not started |
+
+## Session 5 report (Phase 3b — customers, groups, loyalty)
+**Completed**
+* Migration `0005_customers_loyalty` (customer_groups, customers, loyalty_settings, append-only loyalty_ledger; DB CHECKs mirror the source: group discount 0–100, spend-per-point 1…1e8, point value ≤ spend, non-negative counters).
+* Endpoints: customers CRUD (+ archive/restore, search/sort/filter/paging, loyalty ledger), customer groups CRUD, loyalty settings (defaults when unset, owner-only write, the source's validation rules).
+* `LoyaltyMath` (checkout discounts = port of `lib/loyalty/math.ts`; earning = port of SQL `loyalty_apply`) and `LoyaltyService` (`apply`, `redeem` — transaction-only, ledger row per change). `Money::floorDiv`.
+* Golden generator `tools/golden/gen_loyalty.mjs` runs the original TypeScript read-only against the production repo checkout.
+* Rules: points/counters have no write path via the API; customers archived not deleted; cashiers can create/read customers and read groups/ledger/settings; managers edit customers and groups; owner edits loyalty settings.
+* Docs: ADRs D-26…D-28, gaps G-25…G-28, API/test notes.
+
+**Tests executed (actual results)**
+| Suite | Result |
+|---|---|
+| `vendor/bin/phpunit` (unit + golden + MySQL 8.4.6 integration) | **OK — 140 tests, 44,247 assertions** |
+| Golden parity vs original TypeScript (G-DISC-1) | **2,268 / 2,268 cases identical** (group cap, manual-discount error, point limits, fractional values); 4 deliberate maths mutations all flagged (80 / 1,224 / 72 / 3,312 differing fields) |
+| Loyalty properties (500 randomised sequences) | balance never negative; progress always in [0, rate); money received = points × rate + progress |
+| Ledger invariant under 120 random operations with redemptions | balance = Σ ledger points = last `balance_after` at every step |
+| Parallel processes: 6 workers × 20 earns on one customer | exactly 120 points / 120 ledger rows, passes 3/3; with the customer lock removed it fails 6/6 |
+| Mutation check, 9 deliberate breakages (business scope, update permission, write whitelist, cross-business group, loyalty-write permission, redeem balance check, redeem discount check, negative-balance clamp, customer row lock) | **all 9 caught** |
+
+**Security findings closed (by test):** the source let cashiers reach customer edit/delete and relied on a trigger to stop point edits (S-05/S-11 for customers); there is now no API path that writes points or counters, deletion is archival, and every customer/group/loyalty route is tenant-isolated.
+
+**Not done / not verified**
+* Customers' `total_spent`, `visit_count`, `last_visit` are not yet maintained — that happens when sales exist (3c). The "owes money ⇒ cannot archive" rule and the customer statement/purchase history arrive with 3c/3d.
+* `loyalty_ledger.sale_id` has no foreign key yet (sales table does not exist); it is added with the sales migration.
+* Group-edit permission is a documented default (G-25), not confirmed.
+* Customer duplicates are not detected (G-27).
+* The Flutter and web clients do not use these endpoints yet.
 
 ## Session 4 report (Phase 3a — catalogue & stock)
 **Completed**
@@ -100,4 +128,4 @@ _Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current
 G-01 schema-only dump · G-02 data + `auth.users` export (only when ready for rehearsal) · G-03 which of 016–019 are applied · G-09 Flutterwave confirmation · G-10 SMS gateway · G-16 Truehost PHP facts (`phpinfo`) — and a **review of S-01/S-03/S-04/S-06 against the live project**, independent of this rebuild.
 
 ## Exact next task
-Phase 3b — customers, groups, loyalty: migration `0005` (`customer_groups`, `customers` incl. `group_id`, `date_of_birth`, `total_spent`, `visit_count`, `loyalty_points`; `loyalty_settings`, `loyalty_ledger`), `CustomerService`/`GroupService`/`LoyaltyService` (earn/redeem maths per docs/04 §7 with golden vectors computed from the source's `lib/loyalty/math.ts` and SQL logic), plan limit `customers`, customer search, purchase-history stub (filled by 3c), permissions (cashiers may create/read; manager+ update/delete/groups), points never editable via API; tests T-CUST-1, G-LOY-1, G-DISC-1, S-XBIZ on all new routes.
+Phase 3c — POS, sales, documents (the highest-risk module; closes S-03, S-09 partly, S-12, S-13): migration `0006` (`sales`, `sale_items` with `unit_cost` snapshot, `sale_payments`, `debt_repayments` schema prepared for 3d, `sale_edits`, `document_sequences`, FK from `loyalty_ledger.sale_id`), `SaleService::checkout` (server-side recomputation of every figure from the catalogue — the client sends only item ids and quantities, discount choices and payment; customer row locked first per D-26; stock via `StockService::applyDelta`; group/manual/points discounts via `LoyaltyMath`; tax from the business; credit-sale rules; loyalty earn/redeem; `total_spent`/`visit_count`/`last_visit`; unique server-issued receipt number; idempotency via `client_operation_id`), sale list/detail, `edit` (port of `edit_sale`, golden vectors from `lib/sales/edit-math.ts`), void, and the receipt/invoice document model (`lib/documents/model.ts` golden tests). Tests T-POS-1…6, T-EDIT-1…8, duplicate-sale concurrency (parallel identical `client_operation_id`), oversell race, S-XBIZ everywhere.

@@ -55,6 +55,9 @@ MySQL-backed fixed window (`rate_limits`), usable on shared hosting. Applied per
 | D-23 | `cost_price` is hidden from roles without `products.cost.read` | the source exposed cost to cashiers through RLS; they only need the selling price |
 | D-24 | Stock mutation lock order: product row, then stock level row (both `FOR UPDATE`) | serialises concurrent changes without deadlocks; verified by an 8-process test |
 | D-25 | Online code can never drive stock below zero; only the offline-sync path (Phase 4) may, producing a visible `oversold` conflict | satisfies "two devices sell the last unit" without silently losing a sale |
+| D-26 | The sale transaction (3c) must lock the customer row `FOR UPDATE` **before** inserting the sale; `LoyaltyService` re-locks (no-op) and refuses to run outside a transaction | MySQL's FK check takes a shared lock on the customer row; two concurrent sales would both hold it and deadlock when loyalty tries to update. (Postgres avoided this with `FOR NO KEY UPDATE`; MySQL has no equivalent.) |
+| D-27 | Customers are archived, never deleted (sales, repayments and the points ledger reference them); archived customers keep their points | the source's hard delete set `sales.customer_id` to NULL, silently orphaning financial history |
+| D-28 | No endpoint accepts `loyalty_points`, `total_spent`, `visit_count`, `last_visit`; they change only inside `LoyaltyService` / the sale service, each change with an append-only ledger row | the source needed triggers to stop cashiers editing points; here there is simply no write path |
 
 ## Phase 2 additions
 * **Schema:** migrations `0002_identity` (users, user_profiles, auth_sessions, user_tokens, platform_admins) and `0003_tenancy` (businesses, locations, business_members, member_outlets, audit_logs).
@@ -68,3 +71,9 @@ MySQL-backed fixed window (`rate_limits`), usable on shared hosting. Applied per
 * **Invariants (tested after every mutation scenario):** `products.stock_quantity = SUM(stock_levels.quantity)`; each level equals the sum of its movements.
 * **Services:** `CategoryService`, `ProductService`, `StockService` (the only writer of stock), `ProductImportService`, `HousekeepingService` (+ `bin/cron.php housekeeping`).
 * **Shared helpers:** `Pager`, `Csv` (RFC-4180 parser equal to the source's; injection-safe writer), `Validator::money/int/url`.
+
+## Phase 3b additions
+* **Schema:** `0005_customers_loyalty` — `customer_groups`, `customers` (DB column `customer_group_id`, API name `group_id`), `loyalty_settings` (defaults when no row, DB CHECKs mirror the source), append-only `loyalty_ledger`.
+* **Pure maths:** `LoyaltyMath::checkoutDiscounts` (port of `lib/loyalty/math.ts`) and `LoyaltyMath::earn` (port of SQL `loyalty_apply`), exact integer-cent arithmetic via `Money::floorDiv`.
+* **Services:** `CustomerService`, `CustomerGroupService`, `LoyaltyService` (settings, `apply`, `redeem`; both mutate only inside a transaction).
+* **Golden parity:** `tools/golden/gen_loyalty.mjs` runs the unmodified original TS and writes `tests/Golden/loyalty_checkout.json` (2,268 cases covering the 99% cap, the manual-discount error, point limits and fractional point values).
