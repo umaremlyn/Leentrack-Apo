@@ -40,6 +40,10 @@ Each item: what is missing, why it matters, what I did/will do meanwhile, and wh
 | G-42 | Purchase routes are not plan-gated (same as the source) and there is no purchase export/report yet (Phase 3h). | — | — | — |
 | G-43 | A received delivery cannot be reversed (no "return to supplier"). A wrong delivery is corrected with a stock adjustment. | Manual correction | Documented | Owner decision if returns are wanted |
 | G-44 | Order lines whose product was later archived cannot be received until the product is restored (409 `product_unavailable`). | Intentional | Message tells the user what to do | — |
+| G-45 | No transfer **approval** step and no per-item shipping documents (waybill/PDF). | Brief mentions an optional approval | Not built; status machine pending→in_transit→completed | Owner decision |
+| G-46 | Stock lost in transit is recorded as variance only; there is no automatic write-off movement or claim workflow. | Variance must be investigated manually | Visible in view + audit | Owner decision |
+| G-47 | Transfers of an item whose product is archived mid-flight still complete (the goods physically exist); archived products cannot be added to new transfers. | — | Intentional | — |
+| G-48 | Transfer list `from`/`to` filters use UTC day boundaries (same as G-41). | — | — | — |
 
 ## B. Semantics the source leaves ambiguous (owner decisions)
 

@@ -9,7 +9,7 @@ final class Permissions
     private const ALL_MEMBERS = ['sales.create', 'sales.read', 'customers.read', 'customers.create', 'products.read', 'business.read', 'locations.read', 'groups.read', 'loyalty.read'];
     private const MANAGER_EXTRA = [
         'sales.edit', 'sales.void', 'customers.update', 'customers.delete', 'groups.write',
-        'products.write', 'stock.adjust', 'categories.write', 'purchases.manage', 'suppliers.manage',
+        'products.write', 'stock.adjust', 'categories.write', 'purchases.manage', 'suppliers.manage', 'transfers.manage',
         'expenses.manage', 'reports.read', 'products.cost.read', 'profit.read', 'dashboard.read', 'credit.repay', 'credit.read', 'locations.manage', 'staff.read',
     ];
     private const OWNER_EXTRA = ['staff.manage', 'billing.manage', 'branding.write', 'loyalty.write', 'business.update', 'business.delete'];

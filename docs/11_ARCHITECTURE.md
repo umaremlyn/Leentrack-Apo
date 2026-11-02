@@ -121,3 +121,15 @@ MySQL-backed fixed window (`rate_limits`), usable on shared hosting. Applied per
   * D-50 Cost price on products is changed only when the caller sets `update_cost: true` on a delivery; sales keep their remembered `unit_cost`, so profit history is never rewritten.
   * D-51 Free-text lines (no product) can be ordered and "received" but never touch stock (as in the source).
   * D-52 Pending = `ordered` + `partially_received` (the source counted a `sent` status that cannot exist).
+
+## Phase 3g additions
+* **Schema:** `0010_transfers` — `transfers` (status `pending|in_transit|completed|cancelled`, dispatch/receive operation ids + request hashes, `UNIQUE(business_id, …_operation_id)`, CHECK from<>to), `transfer_items` (requested / shipped / received with CHECK `received <= shipped <= requested`).
+* **Services:** `TransferService`, `TransferRepository`, `TransferController`; permission `transfers.manage` (owner, manager).
+* **Decisions:**
+  * D-53 Transfers really move stock (the source only changed a label): dispatch debits the source outlet, receive credits the destination by what arrived. Goods in transit belong to no outlet; `products.stock_quantity` drops at dispatch and is restored at receive.
+  * D-54 Shortfalls are never dropped: `variance = shipped − received` stays on the item row, in the transfer view (`variance_units`) and in the audit log. A shortfall is lost stock, not stock that reappears at the source.
+  * D-55 Dispatch and receive are idempotent per transfer (`client_operation_id` or `Idempotency-Key` + request hash, stored on the transfer row): replay → 200, same id with different content → 409 `idempotency_conflict`; a second attempt with a new id on a finished step → 409 `invalid_status`.
+  * D-56 Cancel: pending → no stock effect; in transit → shipped stock returns to the sender (`transfer_return`); completed/cancelled are final.
+  * D-57 Outlet rules: visible if either end is the user's outlet; creating/editing/dispatching needs the sending outlet (403/422 otherwise), receiving needs the destination; either end may cancel.
+  * D-58 Lock order: transfer row → product rows (ascending id) → level rows, so opposite-direction transfers cannot deadlock (tested).
+  * D-59 No approval step (listed as optional in the brief; absent in the source) — see G-45.

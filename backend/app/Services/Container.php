@@ -12,6 +12,7 @@ use LeenTrack\Repositories\CatalogRepository;
 use LeenTrack\Repositories\CustomerRepository;
 use LeenTrack\Repositories\ExpenseRepository;
 use LeenTrack\Repositories\PurchaseRepository;
+use LeenTrack\Repositories\TransferRepository;
 use LeenTrack\Repositories\ReportRepository;
 use LeenTrack\Repositories\SaleRepository;
 use LeenTrack\Repositories\SessionRepository;
@@ -99,6 +100,8 @@ final class Container
 
     public function purchaseRepo(): PurchaseRepository { return $this->once('poRepo', fn () => new PurchaseRepository($this->app->pdo())); }
     public function purchases(): PurchaseService { return $this->once('purchases', fn () => new PurchaseService($this->app->pdo(), $this->purchaseRepo(), $this->catalog(), $this->stock(), $this->audit())); }
+
+    public function transfers(): TransferService { return $this->once('transfers', fn () => new TransferService($this->app->pdo(), new TransferRepository($this->app->pdo()), $this->catalog(), $this->stock(), $this->audit())); }
 
     public function locations(): LocationService { return $this->once('loc', fn () => new LocationService($this->tenants(), $this->audit())); }
     public function me(): MeService { return $this->once('me', fn () => new MeService($this->users(), $this->tenants(), $this->sessionsRepo(), $this->auth(), $this->audit())); }

@@ -1,6 +1,6 @@
 # LeenTrack Rebuild — Project Status
 
-_Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current phase: **Phase 3 — Business operations: 3a ✅ · 3b ✅ · 3c ✅ · 3d ✅ · 3e ✅ · 3f (suppliers & purchases) COMPLETE; 3g (stock transfers) next**_
+_Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current phase: **Phase 3 — Business operations: 3a ✅ · 3b ✅ · 3c ✅ · 3d ✅ · 3e ✅ · 3f ✅ · 3g (stock transfers) COMPLETE; 3h (reports & CSV export) next**_
 
 ## Ground rules in force
 * Production (Vercel + Supabase) is **never touched**. `umaremlyn/Track` is read-only to this project (verified unmodified).
@@ -14,8 +14,15 @@ _Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current
 | 0 Source audit | ✅ docs 01–10 |
 | 1 Foundation | ✅ backend skeleton + migrator + rate limiter + Money; Flutter scaffold + adaptive shell + API client; docs 11–12 |
 | 2 Database & core (auth, tenancy, policies) | ✅ identity + tenancy + authorization + plan guard + audit; deployment guide drafted |
-| 3 Business operations | 🔶 3a catalogue & stock ✅ · 3b customers/groups/loyalty ✅ · 3c POS/sales/documents ✅ · 3d credit ✅ · 3e expenses/profit/dashboard ✅ · 3f suppliers/purchases ✅ · 3g transfers ⏳ next · 3h reports · 3i staff extras/account lifecycle · 3j billing · 3k admin · 3l settings/branding/cron |
+| 3 Business operations | 🔶 3a catalogue & stock ✅ · 3b customers/groups/loyalty ✅ · 3c POS/sales/documents ✅ · 3d credit ✅ · 3e expenses/profit/dashboard ✅ · 3f suppliers/purchases ✅ · 3g transfers ✅ · 3h reports ⏳ next · 3h reports · 3i staff extras/account lifecycle · 3j billing · 3k admin · 3l settings/branding/cron |
 | 4–10 | ⏳ not started |
+
+## Session 10 report (Phase 3g — stock transfers)
+**Completed:** migration `0010_transfers`; `TransferRepository`, `TransferService`, `TransferController`; 7 routes (list, create, show, edit pending, dispatch, receive, cancel); permission `transfers.manage`. Transfers now really move stock (the source only changed a status label): dispatch debits the sending outlet, receive credits the destination by what arrived, shortfalls stay recorded as variance, cancel in transit returns stock to the sender. Docs 05, 09 (G-45…G-48), 10, 11 (D-53…D-59) updated.
+**Tests executed (actual):** full suite against MySQL 8.4.6 → **OK, 234 tests, 54,744 assertions**. New `TransferTest`: 12 tests / 346 assertions incl. four real parallel-process tests (8 transfers racing for 10 units → exactly 2 leave; 8 duplicate dispatches → 1 applied; 8 same-id receives → 1 applied + 7 replays; 8 opposite-direction two-product transfers dispatched and received concurrently → no deadlock, totals unchanged) and a deterministic lock-order test. Stock invariants (total = Σ levels, level = Σ movements, no negative stock) asserted after scenarios.
+**Mutation checks (15):** all 15 caught after one fix. The first run showed one survivor — reversing the product lock order (descending instead of ascending) — because no test mixed lock orders; I added the deterministic lock-order test and re-ran that mutation: now caught. (Other 14 caught in the original run: no debit, credit by shipped instead of received, no return on cancel, cancel of completed, over-shipping, missing status check, replay hash, transfer row lock, outlet checks ×3, edit after send, permission, zero-unit send.) The 14 original runs were not repeated after adding the new test, which does not change production code.
+**Not done / not verified:** approval step, waybill/PDF (G-45); write-off workflow for lost stock (G-46); clients do not use these endpoints; no real data; PHP 8.3.6.
+**Current phase:** 3 (3a–3g done). **Next task:** Phase 3h — reports and CSV export: `GET /reports/{sales|profit|inventory|expenses|credit|purchases|outlets|products}?from&to&outlet_id&format=json|csv`, reusing the existing services (no second definition of profit/credit), business time-zone periods, CSV formula-injection-safe writer, permission `reports.read`, outlet restrictions, row caps, tests against independent SQL recomputation.
 
 ## Session 9 report (Phase 3f — suppliers & purchase orders)
 **Completed:** migration `0009_purchases`; `PurchaseRepository`, `PurchaseService`, `PurchaseController`; 15 routes (suppliers CRUD/archive/restore; purchase orders CRUD, place, cancel, close, receive); dashboard tile `inventory.pending_purchase_orders`. **S-08 closed:** receiving is additive, bounded by what is outstanding, row-locked, all-or-nothing, idempotent, and moves stock only through `StockService`. Docs 05, 09 (G-40…G-44), 10, 11 (D-46…D-52) updated.
@@ -200,4 +207,4 @@ _Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current
 G-01 schema-only dump · G-02 data + `auth.users` export (only when ready for rehearsal) · G-03 which of 016–019 are applied · G-09 Flutterwave confirmation · G-10 SMS gateway · G-16 Truehost PHP facts (`phpinfo`) — and a **review of S-01/S-03/S-04/S-06 against the live project**, independent of this rebuild.
 
 ## Exact next task
-Phase 3g — stock transfers between outlets (see Session 9 report).
+Phase 3h — reports and CSV export (see Session 10 report).

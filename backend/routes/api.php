@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 use LeenTrack\Core\{Lazy, Router};
-use LeenTrack\Http\Controllers\{AdminController, AuthController, BusinessController, CatalogController, CustomerController, FinanceController, HealthController, PurchaseController, SaleController, LocationController, MeController, StaffController};
+use LeenTrack\Http\Controllers\{AdminController, AuthController, BusinessController, CatalogController, CustomerController, FinanceController, HealthController, PurchaseController, TransferController, SaleController, LocationController, MeController, StaffController};
 use LeenTrack\Services\Container;
 
 /**
@@ -20,6 +20,7 @@ return static function (Router $r, Container $c): void {
     $cust = new Lazy(fn () => new CustomerController($c->customers(), $c->customerGroups(), $c->loyalty()));
     $sale = new Lazy(fn () => new SaleController($c->sales(), $c->branding(), $c->credit()));
     $po = new Lazy(fn () => new PurchaseController($c->purchases()));
+    $tr = new Lazy(fn () => new TransferController($c->transfers()));
     $fin = new Lazy(fn () => new FinanceController($c->expenses(), $c->profit(), $c->dashboard()));
     $admin = new Lazy(fn () => new AdminController($c->app()));
 
@@ -137,6 +138,15 @@ return static function (Router $r, Container $c): void {
     $r->post('/purchase-orders/{id}/cancel', [$po, 'orderCancel'], ['auth', 'tenant']);
     $r->post('/purchase-orders/{id}/close', [$po, 'orderClose'], ['auth', 'tenant']);
     $r->post('/purchase-orders/{id}/receive', [$po, 'orderReceive'], ['auth', 'tenant']);
+
+    // --- stock transfers ---
+    $r->get('/transfers', [$tr, 'index'], ['auth', 'tenant']);
+    $r->post('/transfers', [$tr, 'create'], ['auth', 'tenant']);
+    $r->get('/transfers/{id}', [$tr, 'show'], ['auth', 'tenant']);
+    $r->patch('/transfers/{id}', [$tr, 'update'], ['auth', 'tenant']);
+    $r->post('/transfers/{id}/dispatch', [$tr, 'dispatch'], ['auth', 'tenant']);
+    $r->post('/transfers/{id}/receive', [$tr, 'receive'], ['auth', 'tenant']);
+    $r->post('/transfers/{id}/cancel', [$tr, 'cancel'], ['auth', 'tenant']);
 
     // --- platform administration ---
     $r->get('/admin/stats', [$admin, 'stats'], ['auth', 'platform_admin']);
