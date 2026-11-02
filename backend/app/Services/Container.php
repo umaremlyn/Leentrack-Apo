@@ -10,6 +10,8 @@ use LeenTrack\Mail\Mailer;
 use LeenTrack\Mail\NativeMailer;
 use LeenTrack\Repositories\CatalogRepository;
 use LeenTrack\Repositories\CustomerRepository;
+use LeenTrack\Repositories\ExpenseRepository;
+use LeenTrack\Repositories\ReportRepository;
 use LeenTrack\Repositories\SaleRepository;
 use LeenTrack\Repositories\SessionRepository;
 use LeenTrack\Repositories\TenantRepository;
@@ -87,6 +89,12 @@ final class Container
     }
 
     public function credit(): CreditService { return $this->once('credit', fn () => new CreditService($this->app->pdo(), $this->saleRepo(), $this->customerRepo(), $this->loyalty(), $this->audit())); }
+
+    public function expenseRepo(): ExpenseRepository { return $this->once('expRepo', fn () => new ExpenseRepository($this->app->pdo())); }
+    public function reportRepo(): ReportRepository { return $this->once('repRepo', fn () => new ReportRepository($this->app->pdo())); }
+    public function expenses(): ExpenseService { return $this->once('expenses', fn () => new ExpenseService($this->expenseRepo(), $this->catalog(), $this->audit())); }
+    public function profit(): ProfitService { return $this->once('profit', fn () => new ProfitService($this->reportRepo(), $this->saleRepo())); }
+    public function dashboard(): DashboardService { return $this->once('dash', fn () => new DashboardService($this->reportRepo(), $this->catalog(), $this->saleRepo(), $this->profit(), $this->credit())); }
 
     public function locations(): LocationService { return $this->once('loc', fn () => new LocationService($this->tenants(), $this->audit())); }
     public function me(): MeService { return $this->once('me', fn () => new MeService($this->users(), $this->tenants(), $this->sessionsRepo(), $this->auth(), $this->audit())); }

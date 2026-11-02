@@ -183,6 +183,26 @@ final class CreditService
             $debts = array_values(array_filter($debts, fn ($c) => str_contains(mb_strtolower($c['name']), $search) || str_contains((string) $c['phone'], $search)));
         }
         if ($onlyOverdue) { $debts = array_values(array_filter($debts, fn ($c) => $c['is_overdue'])); }
+        $sum = $this->sumDebts($debts);
+        $pg = Pager::fromQuery($q, 100);
+        $page = array_slice($debts, $pg->offset(), $pg->perPage);
+        return ['rows' => $page, 'meta' => $pg->meta(count($debts)) + ['summary' => $sum]];
+    }
+
+    /**
+     * The ONE definition of "how much is owed / overdue", used by the credit page AND the dashboard (the source's dashboard ignored repayments).
+     * @param list<string>|null $outletIds
+     * @return array{total_owed:string,overdue_owed:string,customers:int,open_sales:int}
+     */
+    public function totals(TenantContext $t, ?array $outletIds): array
+    {
+        $t->require('credit.read');
+        return $this->sumDebts($this->groupDebts($t, $this->sales->openCredit($t->businessId, null, $outletIds)));
+    }
+
+    /** @param list<array<string,mixed>> $debts @return array{total_owed:string,overdue_owed:string,customers:int,open_sales:int} */
+    private function sumDebts(array $debts): array
+    {
         $totalOwed = Money::zero();
         $overdueOwed = Money::zero();
         $openSales = 0;
@@ -191,9 +211,7 @@ final class CreditService
             $openSales += count($c['sales']);
             foreach ($c['sales'] as $s) { if ($s['days_old'] >= self::OVERDUE_DAYS) { $overdueOwed = $overdueOwed->add(Money::parse($s['balance_due'])); } }
         }
-        $pg = Pager::fromQuery($q, 100);
-        $page = array_slice($debts, $pg->offset(), $pg->perPage);
-        return ['rows' => $page, 'meta' => $pg->meta(count($debts)) + ['summary' => ['total_owed' => $totalOwed->toString(), 'overdue_owed' => $overdueOwed->toString(), 'customers' => count($debts), 'open_sales' => $openSales]]];
+        return ['total_owed' => $totalOwed->toString(), 'overdue_owed' => $overdueOwed->toString(), 'customers' => count($debts), 'open_sales' => $openSales];
     }
 
     /** @return array<string,mixed> */

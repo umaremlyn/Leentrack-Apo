@@ -98,3 +98,14 @@ MySQL-backed fixed window (`rate_limits`), usable on shared hosting. Applied per
 ## Phase 3d additions
 * **Endpoints:** `POST /sales/{id}/repayments`, `GET /credit`, `GET /customers/{id}/debt`, `GET /customers/{id}/statement`, `GET /customers/{id}/sales`.
 * **`CreditService`:** repay (with payment receipt via the already-ported `DocumentBuilder::fromPayment`), grouped credit list with the source's 14/30-day badges, per-customer debt, statement with opening/closing balance. `credit.read` permission added (managers + owner, as the sidebar).
+
+## Phase 3e additions
+* **Schema:** `0008_expenses` (`expense_categories` unique per business+name; `expenses` with `expense_date` DATE, soft delete via `deleted_at/deleted_by`).
+* **Services:** `ExpenseService` (CRUD, categories, `seedDefaults`), `ProfitService` (`range`, `compute`, `report`), `DashboardService`; pure `Profit\ProfitMath` and `Profit\PeriodRange` (golden-tested against the original TS: 160 + 36 period cases).
+* **Decisions:**
+  * D-40 Expenses are soft-deleted (row kept with who/when); lists and totals ignore them. A category used by a live expense cannot be deleted (409 `category_in_use`, enforced on the server).
+  * D-41 Dashboard shows distinct named metrics: `revenue_billed` (sales totals), `revenue_collected` (cash actually received incl. repayments), `gross_profit`, `net_profit`. Revenue is never labelled profit.
+  * D-42 Dashboard credit figures come from `CreditService::totals()` — the same code as `/credit` — and a test pins them equal (fixes the source's repayment-blind dashboard).
+  * D-43 Daily series and "today" use local days in the business time zone, not UTC.
+  * D-44 Top products group by `product_id` (two products with one name stay separate); uncapped by a 200-sale window.
+  * D-45 Profit is `null` (unknown), never 0, when a period has sales but none with item details; such sales are reported separately.

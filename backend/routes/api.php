@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 use LeenTrack\Core\{Lazy, Router};
-use LeenTrack\Http\Controllers\{AdminController, AuthController, BusinessController, CatalogController, CustomerController, HealthController, SaleController, LocationController, MeController, StaffController};
+use LeenTrack\Http\Controllers\{AdminController, AuthController, BusinessController, CatalogController, CustomerController, FinanceController, HealthController, SaleController, LocationController, MeController, StaffController};
 use LeenTrack\Services\Container;
 
 /**
@@ -19,6 +19,7 @@ return static function (Router $r, Container $c): void {
     $cat = new Lazy(fn () => new CatalogController($c->categories(), $c->products(), $c->productImport(), $c->stock()));
     $cust = new Lazy(fn () => new CustomerController($c->customers(), $c->customerGroups(), $c->loyalty()));
     $sale = new Lazy(fn () => new SaleController($c->sales(), $c->branding(), $c->credit()));
+    $fin = new Lazy(fn () => new FinanceController($c->expenses(), $c->profit(), $c->dashboard()));
     $admin = new Lazy(fn () => new AdminController($c->app()));
 
     $r->get('/health', [$health, 'show'], [], true);
@@ -104,6 +105,20 @@ return static function (Router $r, Container $c): void {
     $r->get('/customers/{id}/sales', [$sale, 'customerSales'], ['auth', 'tenant']);
     $r->get('/businesses/{id}/branding', [$sale, 'brandingShow'], ['auth', 'tenant:path']);
     $r->put('/businesses/{id}/branding', [$sale, 'brandingSave'], ['auth', 'tenant:path']);
+
+    // --- expenses, profit, dashboard ---
+    $r->get('/expenses', [$fin, 'expenseIndex'], ['auth', 'tenant']);
+    $r->post('/expenses', [$fin, 'expenseCreate'], ['auth', 'tenant']);
+    $r->get('/expenses/{id}', [$fin, 'expenseShow'], ['auth', 'tenant']);
+    $r->patch('/expenses/{id}', [$fin, 'expenseUpdate'], ['auth', 'tenant']);
+    $r->delete('/expenses/{id}', [$fin, 'expenseDelete'], ['auth', 'tenant']);
+    $r->get('/expense-categories', [$fin, 'categoryIndex'], ['auth', 'tenant']);
+    $r->post('/expense-categories', [$fin, 'categoryCreate'], ['auth', 'tenant']);
+    $r->post('/expense-categories/seed-defaults', [$fin, 'categorySeed'], ['auth', 'tenant']);
+    $r->patch('/expense-categories/{id}', [$fin, 'categoryUpdate'], ['auth', 'tenant']);
+    $r->delete('/expense-categories/{id}', [$fin, 'categoryDelete'], ['auth', 'tenant']);
+    $r->get('/profit', [$fin, 'profit'], ['auth', 'tenant']);
+    $r->get('/dashboard', [$fin, 'dashboard'], ['auth', 'tenant']);
 
     // --- platform administration ---
     $r->get('/admin/stats', [$admin, 'stats'], ['auth', 'platform_admin']);

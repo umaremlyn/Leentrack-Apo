@@ -145,3 +145,7 @@ Expenses `GET/POST /expenses`, `PATCH/DELETE /expenses/{id}`, categories `GET/PO
 > * `GET /credit` — customers with open debts, biggest first; each has `sales[]` (oldest first) with `balance_due`, `days_old`, `badge` (`recent` / `two_weeks` ≥14d / `overdue` ≥30d) and `repayments[]`; filters `search`, `customer_id`, `overdue`, `page`, `per_page`; `meta.summary` {total_owed, overdue_owed, customers, open_sales}.
 > * `GET /customers/{id}/debt`, `GET /customers/{id}/statement?from&to` (opening balance, running balance per line, closing = current debt), `GET /customers/{id}/sales`.
 > * `DELETE /customers/{id}` → `409 customer_owes_money` while any balance remains.
+
+
+## Phase 3e — implemented (expenses, profit, dashboard)
+`GET/POST /expenses`, `GET/PATCH/DELETE /expenses/{id}` · `GET/POST /expense-categories`, `POST /expense-categories/seed-defaults`, `PATCH/DELETE /expense-categories/{id}` · `GET /profit?period|from&to&outlet_id&page&per_page` · `GET /dashboard?from&to&outlet_id`. All require auth + tenant; owner/manager only (`expenses.manage`, `profit.read`, `dashboard.read`). Unknown filters → 422. Money as 2-dp strings. Dashboard default = month to date in the business time zone; `series` is null for ranges over 92 days.

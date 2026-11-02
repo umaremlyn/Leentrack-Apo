@@ -31,6 +31,10 @@ Each item: what is missing, why it matters, what I did/will do meanwhile, and wh
 | G-33 | After an edit the discount breakdown (`group/manual/points`) is informational: group discount is zeroed and the rest is attributed to manual/points. | Reporting by discount type is approximate for edited sales | Totals are exact | — |
 | G-34 | Legacy customers may have only `first_name`/`last_name` (the web app's `customerDisplayName` falls back to them). The importer must set `name = COALESCE(NULLIF(TRIM(name),''), TRIM(CONCAT_WS(' ', first_name, last_name)), 'Unknown')`. | Customers could import without a name | Recorded for Phase 8 | Needs the schema dump (G-01) to confirm columns |
 | G-35 | Repayment immutability is enforced by the application (no update/delete path), not by database triggers, because shared hosting often withholds the TRIGGER privilege. | A person with direct DB access could alter history | Audit log + nightly reconciliation job (Phase 3l) will flag drift | — |
+| G-36 | Expense routes are not plan-gated (same as the source). Expense `notes` were never saved by the source form; the API saves them. | Behaviour parity / fix | — | — |
+| G-37 | An outlet filter excludes outlet-less (business-wide) expenses; outlet-restricted managers therefore never see them. | Business-wide costs visible to unrestricted roles only | Documented | Owner confirmation |
+| G-38 | `outlet_id` filter naming another business's outlet returns zeros (200), not 404, for unrestricted roles. No data leaks. | Cosmetic | Could add an existence check | — |
+| G-39 | Dashboard `pending_purchase_orders` deferred to 3f (needs purchases). | Missing tile | Phase 3f | — |
 
 ## B. Semantics the source leaves ambiguous (owner decisions)
 

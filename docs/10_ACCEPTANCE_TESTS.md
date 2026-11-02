@@ -119,3 +119,7 @@ W-LOGIN, W-REGISTER, W-DASH, W-POS, W-INV, W-CAT, W-SALES (+edit), W-CREDIT, W-C
 ## F. Release gates (all must be true)
 
 Feature = working client + API + persistence + authN + authZ + validation + error handling + tests (run, recorded) + docs. No mocked/hard-coded data paths. No open Critical/High security findings. Migration rehearsal reconciliation PASS signed by owner. Rollback rehearsed.
+
+
+## Phase 3e — implemented tests
+`ProfitGoldenTest` (196 vectors from the original TS), `FinanceTest` (10 tests, 303 assertions): expense CRUD/validation/soft delete, roles + S-XBIZ on every new route, filters/summary/pagination, categories (duplicate, in-use, seed), outlet-restricted manager, profit hand-calculation (discount allocation, voids, deleted expenses, missing cost, no-item sales, history not rewritten), time-zone boundaries, dashboard vs independent SQL, credit pinned to `/credit`, local-day series, top products by id, outlet filter, empty business.

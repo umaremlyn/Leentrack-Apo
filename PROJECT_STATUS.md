@@ -1,6 +1,6 @@
 # LeenTrack Rebuild — Project Status
 
-_Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current phase: **Phase 3 — Business operations: 3a ✅ · 3b ✅ · 3c ✅ · 3d (credit & repayments) COMPLETE; 3e (expenses, profit, dashboard) next**_
+_Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current phase: **Phase 3 — Business operations: 3a ✅ · 3b ✅ · 3c ✅ · 3d ✅ · 3e (expenses, profit, dashboard) COMPLETE; 3f (suppliers & purchases) next**_
 
 ## Ground rules in force
 * Production (Vercel + Supabase) is **never touched**. `umaremlyn/Track` is read-only to this project (verified unmodified).
@@ -14,8 +14,16 @@ _Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current
 | 0 Source audit | ✅ docs 01–10 |
 | 1 Foundation | ✅ backend skeleton + migrator + rate limiter + Money; Flutter scaffold + adaptive shell + API client; docs 11–12 |
 | 2 Database & core (auth, tenancy, policies) | ✅ identity + tenancy + authorization + plan guard + audit; deployment guide drafted |
-| 3 Business operations | 🔶 3a catalogue & stock ✅ · 3b customers/groups/loyalty ✅ · 3c POS/sales/documents ✅ · 3d credit ✅ · 3e expenses/profit/dashboard ⏳ next · 3f suppliers/purchases · 3g transfers · 3h reports · 3i staff extras/account lifecycle · 3j billing · 3k admin · 3l settings/branding/cron |
+| 3 Business operations | 🔶 3a catalogue & stock ✅ · 3b customers/groups/loyalty ✅ · 3c POS/sales/documents ✅ · 3d credit ✅ · 3e expenses/profit/dashboard ✅ · 3f suppliers/purchases ⏳ next · 3g transfers · 3h reports · 3i staff extras/account lifecycle · 3j billing · 3k admin · 3l settings/branding/cron |
 | 4–10 | ⏳ not started |
+
+## Session 8 report (Phase 3e — expenses, profit, dashboard)
+**Completed:** migration `0008_expenses`; `ExpenseRepository`, `ReportRepository`, `ExpenseService`, `ProfitService`, `DashboardService`, `FinanceController`; `Profit\ProfitMath` + `PeriodRange`; `CreditService::totals()` shared with the dashboard; routes for expenses, categories, `/profit`, `/dashboard`. Docs 05, 09 (G-36…G-39), 10, 11 (D-40…D-45) updated.
+**Tests executed (actual):** full suite `vendor/bin/phpunit` against MySQL 8.4.6 → **OK, 207 tests, 53,871 assertions**. New: `ProfitGoldenTest` (original TS vectors), `FinanceTest` 10 tests / 303 assertions.
+**Mutation checks (8):** 7 caught (voided sales counted, deleted expenses in totals/list, category in-use ignoring deleted, top products by name, expense and profit permission removal). 1 survived: removing `dashboard.read` from `DashboardService::show` — cashiers are still refused because `ProfitService::range()` also requires `profit.read` (redundant guard, not an exposure; the dashboard's own check is not independently tested).
+**Test-writing errors fixed:** wrong hand arithmetic in my expectations (growth 63.33 %, branch units 9, sales-without-items 2) and a wrong assumption that foreign `outlet_id` gives 404 (it gives zeros; recorded as G-38). No production-code defects found this phase.
+**Not done / not verified:** `pending_purchase_orders` tile (3f); Flutter/web clients do not use these endpoints yet; no real data; PHP 8.3.6 here.
+**Current phase:** 3 (3a–3e done). **Next task:** Phase 3f — suppliers and purchase orders: migration, supplier CRUD with balances, purchase create/send/receive (receiving additive and idempotent, fixing S-08, stock through `StockService`, cost price update rules), payments to suppliers, dashboard pending-orders tile, tests incl. parallel receive.
 
 ## Session 7 report (Phase 3d — credit & repayments)
 **Completed**
@@ -184,4 +192,4 @@ _Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current
 G-01 schema-only dump · G-02 data + `auth.users` export (only when ready for rehearsal) · G-03 which of 016–019 are applied · G-09 Flutterwave confirmation · G-10 SMS gateway · G-16 Truehost PHP facts (`phpinfo`) — and a **review of S-01/S-03/S-04/S-06 against the live project**, independent of this rebuild.
 
 ## Exact next task
-Phase 3e — expenses, profit, dashboard: migration `0008` (`expense_categories`, `expenses` with `expense_date` DATE, payment method/status/reference, optional `outlet_id`, receipt image URL), CRUD with filters + default category seeding as in the source, plan/permission rules (managers+); **profit** as a port of `lib/profit/compute.ts` (golden vectors generated from the original, incl. missing-cost, no-item sales, pro-rata discount, snapshot vs current cost, period ranges in the business time zone) exposed as `GET /profit?period=today|week|month|lastMonth|custom`; **dashboard** `GET /dashboard?from&to&outlet_id` with distinct named metrics (billed revenue, collected, tax, COGS, gross/net profit, expenses, credit outstanding/overdue [from `CreditService`, pinned equal to the credit list], inventory value cost/retail, low/out-of-stock counts, recent sales, top products, 7-day series). Never conflate revenue with profit. Tests: T-EXP-1, G-PROF-1/2, T-DASH-1 (independent SQL recomputation on a seeded dataset), S-XBIZ on every new route.
+Phase 3f — suppliers and purchase orders (see Session 8 report).
