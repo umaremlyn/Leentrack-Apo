@@ -2,7 +2,9 @@
 
 A feature is complete only when its tests exist **and have been run with recorded results** (`PROJECT_STATUS.md` records actual pass/fail counts). IDs are stable. Types: **U** unit · **G** golden (output must equal values produced by the original TypeScript on the same input) · **I** API integration against MySQL · **S** security · **F** Flutter test · **W** web workflow · **M** migration.
 
-Status of every test below at the end of Phase 0: **not yet written / not run.**
+Status log (authoritative record is `PROJECT_STATUS.md`):
+* End of Phase 0: nothing written.
+* End of Phase 2: **implemented and passing** — G-PLAN-1 (`PlanCatalogTest`), T-AUTH-1…5 (`AuthTest`), S-UNAUTH (route-table driven), S-XBIZ, S-ESC-STAFF, S-ESC-ADMIN, S-PLAN, S-TOKEN (partial: tampered/truncated/query/refresh-as-access/expired/revoked), S-SESSION (removal, deactivation, disabled user, password change/reset), S-IDOR for locations/staff/businesses, S-SQLI (auth + business name), error-leak test, audit-redaction test, M-AUTH fixture (legacy `$2a$` bcrypt). Everything else below is still **not written**.
 
 ## A. Golden parity (derived from the source — prevents regressions in business meaning)
 

@@ -44,3 +44,16 @@ MySQL-backed fixed window (`rate_limits`), usable on shared hosting. Applied per
 | D-12 | Routes private by default; `public` is explicit and asserted by a test | prevents accidentally exposed endpoints |
 | D-13 | Rate limiter fails closed | brute-force protection must not silently disappear |
 | D-14 | PHP minimum 8.3 in composer.json for now; CI/prod target 8.4 | sandbox has 8.3.6; code uses no 8.4-only features |
+| D-15 | Staff invite links are e-mailed only and never returned to the inviter | the source returned the link to the owner; that lets an owner accept on the invitee's behalf and set the password of an account on the invitee's e-mail (S-16) |
+| D-16 | Platform admin = row in `platform_admins`, created by CLI only; checked on every request; non-admins get 404 | closes S-01/S-02; role can never come from a request or a profile field |
+| D-17 | Business role lives only in `business_members`; access needs `status='active' AND user_id=caller`; membership re-checked on every request; non-members get 404 | closes S-05 (server-side roles), S-16; removal/deactivation is immediate without token revocation |
+| D-18 | Tokens: opaque, SHA-256 at rest, access 15 min, refresh 30 d rotating; presenting a rotated refresh token revokes the session | theft detection. Clients MUST serialise refresh calls (a concurrent double refresh looks like reuse) |
+| D-19 | Billing columns (`plan*`, `paystack_*`) are not writable by any tenant endpoint; `PlanCatalog::effective()` applies expiry on every request | closes S-06 and stops access outliving payment before the nightly job |
+| D-20 | Registration/forgot/verify never reveal whether an e-mail exists; login errors are identical for unknown user and wrong password | no account enumeration |
+
+## Phase 2 additions
+* **Schema:** migrations `0002_identity` (users, user_profiles, auth_sessions, user_tokens, platform_admins) and `0003_tenancy` (businesses, locations, business_members, member_outlets, audit_logs).
+* **Layers:** Repositories (`UserRepository`, `SessionRepository`, `TenantRepository` — every tenant query takes a `business_id`) → Services (`AuthService`, `SessionService`, `BusinessService`, `StaffService`, `LocationService`, `MeService`, `AuditService`, `PlanCatalog`, `Permissions`) → thin Controllers. `Container` wires services lazily; `Lazy` defers controller construction so a request builds only what it uses.
+* **Middleware:** `auth` / `auth:optional`, `tenant` (header) / `tenant:path`, `platform_admin`, `throttle:N,S`. Contexts: `AuthContext`, `TenantContext` (carries role, effective plan, outlet restriction; `require()`, `requireFeature()`, `requireWithinLimit()`).
+* **Validation:** `Validator` is whitelist-first (`only([...])`): unknown keys and privileged keys (`role`, `plan`, `status`, `user_id`, …) produce 422 before any work happens.
+* **Endpoints implemented:** see the route table in `routes/api.php` (auth, me, sessions, businesses, staff/invites, locations, admin/stats).

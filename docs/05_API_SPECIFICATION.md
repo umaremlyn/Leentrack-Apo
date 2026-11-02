@@ -23,7 +23,7 @@ Error codes → HTTP: `validation_failed` 422 · `unauthenticated` 401 · `token
 
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/auth/register` | `{email,password,full_name,business_name,business_type,currency,phone?,address?}` — role/plan **ignored**; creates user, business (plan `free`), owner membership, sends verification e-mail |
+| POST | `/auth/register` | `{email,password,full_name,business_name,business_type,currency,phone?,address?}` — `role`, `plan`, `status` and any unknown field are **rejected with 422**; always responds `202` with a generic message (no account enumeration); creates user, business (plan `free`), owner membership, default "Main" outlet, sends verification e-mail; login requires a verified e-mail |
 | POST | `/auth/login` | `{email,password,device:{id,name,platform}}` → `{access_token,refresh_token,expires_in,user,memberships[]}`; legacy-hash transition path (06) |
 | POST | `/auth/refresh` | rotating refresh |
 | POST | `/auth/logout` | revokes current session; `?all=1` revokes all |
@@ -76,7 +76,7 @@ Expenses `GET/POST /expenses`, `PATCH/DELETE /expenses/{id}`, categories `GET/PO
 
 ## 8. Team, billing, admin, ops
 
-* Staff `GET/POST /staff` (creates invite), `PATCH/DELETE /staff/{id}`, `POST /staff/{id}/resend-invite`; roles validated against enum; outlet assignment `PUT /staff/{id}/outlets` (NEW).
+* Staff `GET/POST /staff` (creates an invite; the link is **e-mailed only, never returned to the inviter**), `PATCH/DELETE /staff/{id}`, `POST /staff/{id}/resend-invite`; roles validated against enum; outlet assignment `PUT /staff/{id}/outlets` (NEW).
 * Billing `GET /billing/plans` (server catalogue), `GET /billing/subscription`, `POST /billing/checkout` `{plan,cycle,currency,provider}` → provider init `{reference,authorization_url|access_code}`, `GET /billing/verify?reference=` (server-side provider verify; **the only path that can activate**), `GET /billing/history`, `POST /billing/cancel`. Webhooks (unauthenticated, signature-verified): `POST /webhooks/paystack`, `POST /webhooks/flutterwave` (**only after G-09 is resolved**).
 * Admin (platform_admins only) `GET /admin/stats|businesses|users|payments|audit-logs`, `PATCH /admin/businesses/{id}/plan|status`, `POST /admin/notices`, `DELETE /admin/users/{id}` (soft, audited, step-up confirmation).
 * Sync `POST /sync/push` (batch ≤50 ops), `GET /sync/pull?since=<cursor>&entities=products,customers,…`, `GET /sync/status`, `POST /sync/ops/{id}/resolve` — protocol in §10.

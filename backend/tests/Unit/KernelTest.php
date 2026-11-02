@@ -84,10 +84,18 @@ final class KernelTest extends TestCase
         $this->assertSame('server_error', json_decode($res->body, true)['error']['code']);
     }
 
-    /** Route-table security guard (grows as routes are added): every public route must be explicitly marked. */
+    /** Route-table security guard: the ONLY anonymous endpoints. Adding a public route requires editing this list on purpose. */
+    private const PUBLIC_ALLOW_LIST = [
+        'GET /health', 'POST /auth/register', 'POST /auth/login', 'POST /auth/refresh', 'POST /auth/forgot-password',
+        'POST /auth/reset-password', 'POST /auth/verify-email', 'POST /auth/resend-verification', 'POST /invites/accept',
+    ];
+
     public function testOnlyExplicitlyPublicRoutesExist(): void
     {
-        $public = array_filter((new Kernel($this->app()))->router()->table(), fn ($r) => $r['public']);
-        $this->assertSame(['/health'], array_values(array_column($public, 'pattern')));
+        $public = array_map(fn ($r) => $r['method'] . ' ' . $r['pattern'], array_filter((new Kernel($this->app()))->router()->table(), fn ($r) => $r['public']));
+        sort($public);
+        $expected = self::PUBLIC_ALLOW_LIST;
+        sort($expected);
+        $this->assertSame($expected, array_values($public));
     }
 }

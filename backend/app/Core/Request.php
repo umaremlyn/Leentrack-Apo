@@ -102,6 +102,20 @@ final class Request
         return $this->json = $data;
     }
 
+    public function auth(): \LeenTrack\Http\AuthContext
+    {
+        $a = $this->attributes['auth'] ?? null;
+        if (!$a instanceof \LeenTrack\Http\AuthContext) { throw ApiException::unauthenticated(); }
+        return $a;
+    }
+
+    public function tenant(): \LeenTrack\Http\TenantContext
+    {
+        $t = $this->attributes['tenant'] ?? null;
+        if (!$t instanceof \LeenTrack\Http\TenantContext) { throw ApiException::forbidden('Business context required.'); }
+        return $t;
+    }
+
     public function rawBody(): string
     {
         return $this->rawBody;

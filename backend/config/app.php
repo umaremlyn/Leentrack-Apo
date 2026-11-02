@@ -14,6 +14,16 @@ return [
     'cors_origins' => array_values(array_filter(array_map('trim', explode(',', (string) Env::get('CORS_ALLOWED_ORIGINS', ''))))),
     'trusted_proxies' => array_values(array_filter(array_map('trim', explode(',', (string) Env::get('TRUSTED_PROXIES', ''))))),
     'rate_limit_enabled' => Env::bool('RATE_LIMIT_ENABLED', true),
+    'web_url' => rtrim((string) Env::get('WEB_URL', ''), '/'),
+    'mail_from' => Env::get('MAIL_FROM', 'LeenTrack <no-reply@localhost>'),
+    'auth' => [
+        'access_ttl' => Env::int('ACCESS_TOKEN_TTL', 900),            // 15 min
+        'refresh_ttl' => Env::int('REFRESH_TOKEN_TTL', 2592000),      // 30 days
+        'require_email_verification' => Env::bool('REQUIRE_EMAIL_VERIFICATION', true),
+        'invite_ttl' => Env::int('INVITE_TTL', 604800),               // 7 days
+        'reset_ttl' => 3600,
+        'verify_ttl' => 172800,
+    ],
     'db' => [
         'host' => Env::get('DB_HOST', '127.0.0.1'),
         'port' => Env::int('DB_PORT', 3306),

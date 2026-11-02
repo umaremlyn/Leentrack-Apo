@@ -9,16 +9,25 @@ use LeenTrack\Core\Request;
 use LeenTrack\Core\Response;
 use LeenTrack\Core\Router;
 use LeenTrack\Http\Middleware\Middleware;
-use LeenTrack\Http\Middleware\ThrottleMiddleware;
+use LeenTrack\Http\Middleware\{AuthMiddleware, PlatformAdminMiddleware, TenantMiddleware, ThrottleMiddleware};
+use LeenTrack\Services\Container;
 
 final class Kernel
 {
     private Router $router;
 
-    public function __construct(private readonly App $app)
+    private Container $c;
+
+    public function __construct(private readonly App $app, ?Container $container = null)
     {
+        $this->c = $container ?? new Container($app);
         $this->router = new Router();
-        (require dirname(__DIR__, 2) . '/routes/api.php')($this->router, $app);
+        (require dirname(__DIR__, 2) . '/routes/api.php')($this->router, $this->c);
+    }
+
+    public function container(): Container
+    {
+        return $this->c;
     }
 
     public function router(): Router
@@ -79,7 +88,14 @@ final class Kernel
             [$max, $win] = array_map('intval', explode(',', substr($spec, 9)));
             return new ThrottleMiddleware($this->app, $max, $win, $path);
         }
-        throw new \LogicException("Unknown middleware: $spec");
+        return match ($spec) {
+            'auth' => new AuthMiddleware($this->c->sessions()),
+            'auth:optional' => new AuthMiddleware($this->c->sessions(), true),
+            'tenant' => new TenantMiddleware($this->c->tenants()),
+            'tenant:path' => new TenantMiddleware($this->c->tenants(), true),
+            'platform_admin' => new PlatformAdminMiddleware($this->c->users()),
+            default => throw new \LogicException("Unknown middleware: $spec"),
+        };
     }
 
     private function decorate(Request $request, Response $response): Response

@@ -16,6 +16,8 @@ Each item: what is missing, why it matters, what I did/will do meanwhile, and wh
 | G-16 | Hosting facts for Truehost plan: PHP extensions (`pdo_mysql`, `mbstring`, `gd`/`imagick`, `bcmath`, `sodium`), `max_execution_time`, memory, cron granularity, SSH availability, outbound HTTPS to Paystack, Composer availability. | Library choices, importer chunking | Code uses only common extensions and degrades (`bcmath` fallback to pure-PHP decimal) | Owner: `phpinfo()` or cPanel details |
 | G-17 | Apple developer account, Google Play account, code-signing for Windows/macOS. | Store/distribution | Build docs only | Owner |
 | G-18 | Domain/sub-domain plan (`api.`?), e-mail sender domain (SPF/DKIM) for transactional mail (source uses Resend with `onboarding@resend.dev` sandbox sender). | Deliverability | Mailer interface: SMTP via cPanel or Resend API | Owner |
+| G-21 | **Weak legacy passwords.** Supabase allowed shorter/weaker passwords than our policy. Migrated users keep access on their first login (no strength check, by design, so nobody is locked out), but their password stays weak. | Weak credentials persist | Planned: `must_change_password` flag + prompt after legacy login (Phase 3i) | Owner decision on enforcement (prompt vs. force) |
+| G-22 | **Mail transport.** Production default is PHP `mail()` via the host's sendmail (no SPF/DKIM guarantee). Source used Resend. | Verification/reset mails may land in spam | `Mailer` interface ready for SMTP/Resend | Owner: choose SMTP/Resend and set up SPF/DKIM |
 
 ## B. Semantics the source leaves ambiguous (owner decisions)
 
