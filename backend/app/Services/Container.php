@@ -11,6 +11,7 @@ use LeenTrack\Mail\NativeMailer;
 use LeenTrack\Repositories\CatalogRepository;
 use LeenTrack\Repositories\CustomerRepository;
 use LeenTrack\Repositories\ExpenseRepository;
+use LeenTrack\Repositories\PurchaseRepository;
 use LeenTrack\Repositories\ReportRepository;
 use LeenTrack\Repositories\SaleRepository;
 use LeenTrack\Repositories\SessionRepository;
@@ -94,7 +95,10 @@ final class Container
     public function reportRepo(): ReportRepository { return $this->once('repRepo', fn () => new ReportRepository($this->app->pdo())); }
     public function expenses(): ExpenseService { return $this->once('expenses', fn () => new ExpenseService($this->expenseRepo(), $this->catalog(), $this->audit())); }
     public function profit(): ProfitService { return $this->once('profit', fn () => new ProfitService($this->reportRepo(), $this->saleRepo())); }
-    public function dashboard(): DashboardService { return $this->once('dash', fn () => new DashboardService($this->reportRepo(), $this->catalog(), $this->saleRepo(), $this->profit(), $this->credit())); }
+    public function dashboard(): DashboardService { return $this->once('dash', fn () => new DashboardService($this->reportRepo(), $this->catalog(), $this->saleRepo(), $this->profit(), $this->credit(), $this->purchaseRepo())); }
+
+    public function purchaseRepo(): PurchaseRepository { return $this->once('poRepo', fn () => new PurchaseRepository($this->app->pdo())); }
+    public function purchases(): PurchaseService { return $this->once('purchases', fn () => new PurchaseService($this->app->pdo(), $this->purchaseRepo(), $this->catalog(), $this->stock(), $this->audit())); }
 
     public function locations(): LocationService { return $this->once('loc', fn () => new LocationService($this->tenants(), $this->audit())); }
     public function me(): MeService { return $this->once('me', fn () => new MeService($this->users(), $this->tenants(), $this->sessionsRepo(), $this->auth(), $this->audit())); }

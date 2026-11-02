@@ -123,3 +123,7 @@ Feature = working client + API + persistence + authN + authZ + validation + erro
 
 ## Phase 3e — implemented tests
 `ProfitGoldenTest` (196 vectors from the original TS), `FinanceTest` (10 tests, 303 assertions): expense CRUD/validation/soft delete, roles + S-XBIZ on every new route, filters/summary/pagination, categories (duplicate, in-use, seed), outlet-restricted manager, profit hand-calculation (discount allocation, voids, deleted expenses, missing cost, no-item sales, history not rewritten), time-zone boundaries, dashboard vs independent SQL, credit pinned to `/credit`, local-day series, top products by id, outlet filter, empty business.
+
+
+## Phase 3f — implemented tests (`PurchaseTest`)
+Supplier CRUD/archive/restore/search/validation · roles + S-XBIZ on all 15 routes · server-side totals/numbering and 20+ validation cases (forged totals/status/number, duplicates, services, overflow) · draft edit/delete/place rules · partial → complete receiving with exact stock, movements and invariants · **S-08**: second delivery, over-receipt, foreign item ids, all-or-nothing, no receipt row left by refusals · status machine (cancel/close/final states) · outlet landing + opt-in cost update · archived product rollback · idempotency (replay, header key, conflicts on content and on another order) · outlet-restricted manager · list filters + dashboard tile · **real parallel processes**: 8×3 competing deliveries against 20 ordered → exactly 4 accepted; 8 identical retries → 1 applied; receiving racing with sales never oversells.

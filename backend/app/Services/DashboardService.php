@@ -30,6 +30,7 @@ final class DashboardService
         private readonly SaleRepository $sales,
         private readonly ProfitService $profit,
         private readonly CreditService $credit,
+        private readonly \LeenTrack\Repositories\PurchaseRepository $purchases,
     ) {
     }
 
@@ -71,7 +72,8 @@ final class DashboardService
             'previous_period' => ['from' => $prev['fromDate'], 'to' => (new \DateTimeImmutable($prev['toDate']))->modify('-1 day')->format('Y-m-d')] + $before + ['revenue_billed_growth_percent' => $growth],
             'today' => $now,
             'credit' => ['outstanding' => $credit['total_owed'], 'overdue' => $credit['overdue_owed'], 'customers_owing' => $credit['customers'], 'open_sales' => $credit['open_sales']],
-            'inventory' => ['value_at_cost' => $val['cost'], 'value_at_retail' => $val['retail'], 'units' => $val['units'], 'active_items' => $counts['products'], 'low_stock' => $counts['low'], 'out_of_stock' => $counts['out']],
+            'inventory' => ['value_at_cost' => $val['cost'], 'value_at_retail' => $val['retail'], 'units' => $val['units'], 'active_items' => $counts['products'], 'low_stock' => $counts['low'], 'out_of_stock' => $counts['out'],
+                'pending_purchase_orders' => $this->purchases->pendingCount($t->businessId, $outlet, $t->outletIds)],
             'recent_sales' => array_map(fn ($s) => ['id' => $s['id'], 'receipt_number' => $s['receipt_number'], 'total_amount' => $s['total_amount'], 'payment_method' => $s['payment_method'], 'payment_status' => $s['payment_status'],
                 'customer_name' => $s['customer_name'], 'created_at' => (new \DateTimeImmutable($s['created_at'], new \DateTimeZone('UTC')))->format('Y-m-d\TH:i:s.v\Z')], $this->reports->recentSales($t->businessId, $outlet, $t->outletIds, 5)),
             'top_products' => array_map(fn ($p) => ['product_id' => $p['product_id'], 'name' => $p['name'], 'quantity' => (int) $p['qty'], 'revenue' => $this->fmt((string) $p['revenue'])], $this->reports->topProducts($t->businessId, $from, $to, $outlet, $t->outletIds, 5)),

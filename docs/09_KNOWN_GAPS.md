@@ -34,7 +34,12 @@ Each item: what is missing, why it matters, what I did/will do meanwhile, and wh
 | G-36 | Expense routes are not plan-gated (same as the source). Expense `notes` were never saved by the source form; the API saves them. | Behaviour parity / fix | — | — |
 | G-37 | An outlet filter excludes outlet-less (business-wide) expenses; outlet-restricted managers therefore never see them. | Business-wide costs visible to unrestricted roles only | Documented | Owner confirmation |
 | G-38 | `outlet_id` filter naming another business's outlet returns zeros (200), not 404, for unrestricted roles. No data leaks. | Cosmetic | Could add an existence check | — |
-| G-39 | Dashboard `pending_purchase_orders` deferred to 3f (needs purchases). | Missing tile | Phase 3f | — |
+| G-39 | ~~Dashboard `pending_purchase_orders` deferred~~ — done in 3f (`inventory.pending_purchase_orders`). | — | — | — |
+| G-40 | **Supplier balances / supplier payments are not built** (absent in the source; listed as NEW in the brief). Orders carry a cost but nothing tracks what is owed to a supplier. | No payables | Owner decision on semantics (pay per order? statements?) | Owner |
+| G-41 | Purchase order list `from`/`to` filters use UTC day boundaries, not the business time zone. | Orders near midnight may fall on the neighbouring day | Documented | — |
+| G-42 | Purchase routes are not plan-gated (same as the source) and there is no purchase export/report yet (Phase 3h). | — | — | — |
+| G-43 | A received delivery cannot be reversed (no "return to supplier"). A wrong delivery is corrected with a stock adjustment. | Manual correction | Documented | Owner decision if returns are wanted |
+| G-44 | Order lines whose product was later archived cannot be received until the product is restored (409 `product_unavailable`). | Intentional | Message tells the user what to do | — |
 
 ## B. Semantics the source leaves ambiguous (owner decisions)
 

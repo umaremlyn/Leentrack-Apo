@@ -149,3 +149,8 @@ Expenses `GET/POST /expenses`, `PATCH/DELETE /expenses/{id}`, categories `GET/PO
 
 ## Phase 3e — implemented (expenses, profit, dashboard)
 `GET/POST /expenses`, `GET/PATCH/DELETE /expenses/{id}` · `GET/POST /expense-categories`, `POST /expense-categories/seed-defaults`, `PATCH/DELETE /expense-categories/{id}` · `GET /profit?period|from&to&outlet_id&page&per_page` · `GET /dashboard?from&to&outlet_id`. All require auth + tenant; owner/manager only (`expenses.manage`, `profit.read`, `dashboard.read`). Unknown filters → 422. Money as 2-dp strings. Dashboard default = month to date in the business time zone; `series` is null for ranges over 92 days.
+
+
+## Phase 3f — implemented (suppliers & purchase orders)
+`GET/POST /suppliers`, `GET/PATCH/DELETE(archive) /suppliers/{id}`, `POST /suppliers/{id}/restore` · `GET/POST /purchase-orders`, `GET/PATCH/DELETE /purchase-orders/{id}` (PATCH/DELETE draft only; `items` replaces all lines) · `POST /purchase-orders/{id}/order|cancel|close|receive`.
+Create body: `{supplier_id?, outlet_id?, notes?, items:[{product_id?|product_name, quantity, unit_cost?}]}` — totals, numbers, status and names are server-side (`total_cost`, `status`, `order_number` → 422). Receive body: `{client_operation_id (or Idempotency-Key header), items:[{item_id, quantity}], update_cost?}` → 201 `{receipt_id, order}`; replay → 200 `meta.replayed=true`; errors `invalid_status`, `over_receive` (per-line `fields`), `product_unavailable`, `idempotency_conflict` (all 409). Requires `purchases.manage` / `suppliers.manage` (owner, manager). Outlet-restricted managers only see and receive their outlets' orders.

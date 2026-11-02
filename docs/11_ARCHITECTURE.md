@@ -109,3 +109,15 @@ MySQL-backed fixed window (`rate_limits`), usable on shared hosting. Applied per
   * D-43 Daily series and "today" use local days in the business time zone, not UTC.
   * D-44 Top products group by `product_id` (two products with one name stay separate); uncapped by a 200-sale window.
   * D-45 Profit is `null` (unknown), never 0, when a period has sales but none with item details; such sales are reported separately.
+
+## Phase 3f additions
+* **Schema:** `0009_purchases` — `suppliers` (archived, never deleted), `purchase_orders` (status `draft|ordered|partially_received|received|closed|cancelled`, `outlet_id` = where stock lands, unique `(business_id, order_number)`), `purchase_order_items` (CHECK `0 <= received <= ordered`), `purchase_receipts` (`UNIQUE(business_id, client_operation_id)`), `purchase_receipt_items`.
+* **Services:** `PurchaseService`, `PurchaseRepository`, `PurchaseController`; the dashboard gains `inventory.pending_purchase_orders`.
+* **Decisions:**
+  * D-46 Receiving fixes S-08: order row locked first (then products ascending, then level rows); a delivery is bounded by what is still outstanding; quantities are added, never overwritten; whole delivery is all-or-nothing; stock only through `StockService::applyDelta` (reason `purchase`, ref = order).
+  * D-47 Receiving is idempotent: `client_operation_id` (or `Idempotency-Key`) + request hash; replay → 200 with the original receipt, same id with different content/order → 409 `idempotency_conflict`. The receipt row is inserted before stock moves.
+  * D-48 Order numbers are server-issued, gap-free per business (`PO-000001`) from `document_sequences` (kind `purchase`).
+  * D-49 Suppliers are archived (not deleted) so order history keeps its supplier. Orders are deleted only while `draft`; later they are cancelled (nothing received) or closed (part received, rest not coming).
+  * D-50 Cost price on products is changed only when the caller sets `update_cost: true` on a delivery; sales keep their remembered `unit_cost`, so profit history is never rewritten.
+  * D-51 Free-text lines (no product) can be ordered and "received" but never touch stock (as in the source).
+  * D-52 Pending = `ordered` + `partially_received` (the source counted a `sent` status that cannot exist).

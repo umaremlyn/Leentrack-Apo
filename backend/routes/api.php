@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 use LeenTrack\Core\{Lazy, Router};
-use LeenTrack\Http\Controllers\{AdminController, AuthController, BusinessController, CatalogController, CustomerController, FinanceController, HealthController, SaleController, LocationController, MeController, StaffController};
+use LeenTrack\Http\Controllers\{AdminController, AuthController, BusinessController, CatalogController, CustomerController, FinanceController, HealthController, PurchaseController, SaleController, LocationController, MeController, StaffController};
 use LeenTrack\Services\Container;
 
 /**
@@ -19,6 +19,7 @@ return static function (Router $r, Container $c): void {
     $cat = new Lazy(fn () => new CatalogController($c->categories(), $c->products(), $c->productImport(), $c->stock()));
     $cust = new Lazy(fn () => new CustomerController($c->customers(), $c->customerGroups(), $c->loyalty()));
     $sale = new Lazy(fn () => new SaleController($c->sales(), $c->branding(), $c->credit()));
+    $po = new Lazy(fn () => new PurchaseController($c->purchases()));
     $fin = new Lazy(fn () => new FinanceController($c->expenses(), $c->profit(), $c->dashboard()));
     $admin = new Lazy(fn () => new AdminController($c->app()));
 
@@ -119,6 +120,23 @@ return static function (Router $r, Container $c): void {
     $r->delete('/expense-categories/{id}', [$fin, 'categoryDelete'], ['auth', 'tenant']);
     $r->get('/profit', [$fin, 'profit'], ['auth', 'tenant']);
     $r->get('/dashboard', [$fin, 'dashboard'], ['auth', 'tenant']);
+
+    // --- suppliers & purchase orders ---
+    $r->get('/suppliers', [$po, 'supplierIndex'], ['auth', 'tenant']);
+    $r->post('/suppliers', [$po, 'supplierCreate'], ['auth', 'tenant']);
+    $r->get('/suppliers/{id}', [$po, 'supplierShow'], ['auth', 'tenant']);
+    $r->patch('/suppliers/{id}', [$po, 'supplierUpdate'], ['auth', 'tenant']);
+    $r->delete('/suppliers/{id}', [$po, 'supplierArchive'], ['auth', 'tenant']);
+    $r->post('/suppliers/{id}/restore', [$po, 'supplierRestore'], ['auth', 'tenant']);
+    $r->get('/purchase-orders', [$po, 'orderIndex'], ['auth', 'tenant']);
+    $r->post('/purchase-orders', [$po, 'orderCreate'], ['auth', 'tenant']);
+    $r->get('/purchase-orders/{id}', [$po, 'orderShow'], ['auth', 'tenant']);
+    $r->patch('/purchase-orders/{id}', [$po, 'orderUpdate'], ['auth', 'tenant']);
+    $r->delete('/purchase-orders/{id}', [$po, 'orderDelete'], ['auth', 'tenant']);
+    $r->post('/purchase-orders/{id}/order', [$po, 'orderPlace'], ['auth', 'tenant']);
+    $r->post('/purchase-orders/{id}/cancel', [$po, 'orderCancel'], ['auth', 'tenant']);
+    $r->post('/purchase-orders/{id}/close', [$po, 'orderClose'], ['auth', 'tenant']);
+    $r->post('/purchase-orders/{id}/receive', [$po, 'orderReceive'], ['auth', 'tenant']);
 
     // --- platform administration ---
     $r->get('/admin/stats', [$admin, 'stats'], ['auth', 'platform_admin']);
