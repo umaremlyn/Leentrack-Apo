@@ -8,6 +8,7 @@ use LeenTrack\Core\RateLimiter;
 use LeenTrack\Mail\FileMailer;
 use LeenTrack\Mail\Mailer;
 use LeenTrack\Mail\NativeMailer;
+use LeenTrack\Repositories\CatalogRepository;
 use LeenTrack\Repositories\SessionRepository;
 use LeenTrack\Repositories\TenantRepository;
 use LeenTrack\Repositories\UserRepository;
@@ -64,6 +65,12 @@ final class Container
     {
         return $this->once('staff', fn () => new StaffService($this->app->pdo(), $this->tenants(), $this->users(), $this->sessions(), $this->hasher(), $this->mailer(), $this->audit(), (int) $this->app->config['auth']['invite_ttl'], $this->app->config['web_url']));
     }
+
+    public function catalog(): CatalogRepository { return $this->once('catalog', fn () => new CatalogRepository($this->app->pdo())); }
+    public function stock(): StockService { return $this->once('stock', fn () => new StockService($this->app->pdo(), $this->catalog(), $this->audit())); }
+    public function categories(): CategoryService { return $this->once('cats', fn () => new CategoryService($this->catalog(), $this->audit())); }
+    public function products(): ProductService { return $this->once('prods', fn () => new ProductService($this->app->pdo(), $this->catalog(), $this->stock(), $this->audit())); }
+    public function productImport(): ProductImportService { return $this->once('pimport', fn () => new ProductImportService($this->app->pdo(), $this->catalog(), $this->stock(), $this->audit())); }
 
     public function locations(): LocationService { return $this->once('loc', fn () => new LocationService($this->tenants(), $this->audit())); }
     public function me(): MeService { return $this->once('me', fn () => new MeService($this->users(), $this->tenants(), $this->sessionsRepo(), $this->auth(), $this->audit())); }

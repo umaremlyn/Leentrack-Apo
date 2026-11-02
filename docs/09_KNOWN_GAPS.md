@@ -18,6 +18,8 @@ Each item: what is missing, why it matters, what I did/will do meanwhile, and wh
 | G-18 | Domain/sub-domain plan (`api.`?), e-mail sender domain (SPF/DKIM) for transactional mail (source uses Resend with `onboarding@resend.dev` sandbox sender). | Deliverability | Mailer interface: SMTP via cPanel or Resend API | Owner |
 | G-21 | **Weak legacy passwords.** Supabase allowed shorter/weaker passwords than our policy. Migrated users keep access on their first login (no strength check, by design, so nobody is locked out), but their password stays weak. | Weak credentials persist | Planned: `must_change_password` flag + prompt after legacy login (Phase 3i) | Owner decision on enforcement (prompt vs. force) |
 | G-22 | **Mail transport.** Production default is PHP `mail()` via the host's sendmail (no SPF/DKIM guarantee). Source used Resend. | Verification/reset mails may land in spam | `Mailer` interface ready for SMTP/Resend | Owner: choose SMTP/Resend and set up SPF/DKIM |
+| G-23 | **Client edit forms must change.** The web/Flutter product edit form sends `stock_quantity`; the API now rejects it. Clients must call `/stock/adjustments` (with a reason) when stock is edited. | Phase 7 web refactor must split the form submit into PATCH + adjustment | API contract documented | — |
+| G-24 | Source CSV import has no plan-limit check and accepts duplicate barcodes; the API enforces both. Imports that "worked" before may now be refused. | Behaviour change (security/consistency fix) | Row-level messages explain why | Owner awareness |
 
 ## B. Semantics the source leaves ambiguous (owner decisions)
 

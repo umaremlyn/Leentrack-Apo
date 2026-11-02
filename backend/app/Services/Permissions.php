@@ -10,7 +10,7 @@ final class Permissions
     private const MANAGER_EXTRA = [
         'sales.edit', 'sales.void', 'customers.update', 'customers.delete', 'groups.write',
         'products.write', 'stock.adjust', 'categories.write', 'purchases.manage', 'suppliers.manage',
-        'expenses.manage', 'reports.read', 'profit.read', 'dashboard.read', 'credit.repay', 'locations.manage', 'staff.read',
+        'expenses.manage', 'reports.read', 'products.cost.read', 'profit.read', 'dashboard.read', 'credit.repay', 'locations.manage', 'staff.read',
     ];
     private const OWNER_EXTRA = ['staff.manage', 'billing.manage', 'branding.write', 'loyalty.write', 'business.update', 'business.delete'];
 

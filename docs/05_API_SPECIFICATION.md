@@ -46,7 +46,7 @@ Locations: `GET/POST /locations`, `GET/PATCH/DELETE /locations/{id}` (delete blo
 ## 4. Catalogue & stock
 
 * Categories `GET/POST /categories`, `PATCH/DELETE /categories/{id}`.
-* Products `GET /products?search=&category_id=&type=&active=&low_stock=1&barcode=&location_id=`, `POST`, `GET/PATCH/DELETE /products/{id}` (delete = archive if referenced), `POST /products/import` (CSV multipart → dry-run `?validate=1` then commit; same alias rules as source), `GET /products/export` (CSV, formula-injection-safe).
+* Products `GET /products?search=&category_id=&type=&active=&low_stock=1&barcode=&location_id=`, `POST`, `GET/PATCH/DELETE /products/{id}` (delete = archive if referenced), `POST /products/import?mode=validate|commit[&location_id=]` (body `text/csv`, or JSON `{"csv":"..."}`; ≤2 MB, ≤2000 rows, UTF-8; same column aliases and row rules as the web dialog; all-or-nothing commit; plan limits enforced; response lists per-row errors), `GET /products/export` (CSV with BOM, formula-injection-safe, plan-gated `exportReports`, needs `reports.read`).
 * Stock (NEW) `POST /stock/adjustments` `{product_id,location_id,delta|new_quantity,reason}`, `GET /stock/movements?product_id=&location_id=&from=&to=`, `GET /stock/levels?location_id=`, `GET /stock/valuation?method=cost|retail`.
 * Transfers `GET/POST /transfers`, `GET /transfers/{id}`, `POST /transfers/{id}/approve|dispatch|receive|cancel` (receive takes per-item `quantity_received`).
 
@@ -125,3 +125,6 @@ Expenses `GET/POST /expenses`, `PATCH/DELETE /expenses/{id}`, categories `GET/PO
 **Pull:** monotonically increasing `change_seq` per business (`entity_changes` table); `GET /sync/pull?since=n` returns upserts/tombstones for allow-listed entities, paginated; client applies in one SQLite transaction and stores the new cursor.
 **Reconciliation:** nightly `reconcile` cron recomputes `products.stock_quantity` vs `Σ stock_levels` vs `Σ stock_movements` and reports drift (never auto-corrects money).
 **Clock skew:** `created_at` is advisory (stored as `client_created_at`); ordering and reports use server `received_at` for audit and `client_created_at` for the business date of the sale, clamped to ≤ now+5 min and ≥ now−30 days (beyond → needs owner approval).
+
+
+> **Phase 3a as built:** products/categories/stock endpoints follow §4 with these specifics — `DELETE /products/{id}` archives (restore via `POST /products/{id}/restore`); product `PATCH` rejects `stock_quantity`; list filters `search, category_id, type, active, barcode, stock_status=low|out|ok, archived, sort=name|created_at|selling_price|stock_quantity, dir, page, per_page` (unknown filters → 422); `cost_price` is omitted for roles without `products.cost.read` (cashiers); outlet-restricted members see stock only for their outlets.

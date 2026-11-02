@@ -106,6 +106,49 @@ final class Validator
         return $v;
     }
 
+    /** Whole number within [min,max]. Accepts JSON ints or digit strings, never floats like 1.5. */
+    public function int(string $key, int $min, int $max, bool $required = true, ?int $default = null): ?int
+    {
+        if (!$this->has($key) || $this->data[$key] === null || $this->data[$key] === '') {
+            if ($required && $default === null) { $this->errors[$key][] = 'This field is required.'; }
+            return $default;
+        }
+        $v = $this->data[$key];
+        if (is_string($v) && preg_match('/^-?\d{1,12}$/', $v)) { $v = (int) $v; }
+        if (!is_int($v) || $v < $min || $v > $max) { $this->errors[$key][] = "Must be a whole number between $min and $max."; return null; }
+        return $v;
+    }
+
+    /** Money amount (≥0 unless $allowNegative) with at most 2 decimals. Returns a Money object. */
+    public function money(string $key, bool $required = true, ?Money $default = null): ?Money
+    {
+        if (!$this->has($key) || $this->data[$key] === null || $this->data[$key] === '') {
+            if ($required && $default === null) { $this->errors[$key][] = 'This field is required.'; }
+            return $default;
+        }
+        $v = $this->data[$key];
+        if (!is_int($v) && !is_string($v) && !is_float($v)) { $this->errors[$key][] = 'Must be an amount.'; return null; }
+        try {
+            $m = Money::parse(is_float($v) ? rtrim(rtrim(sprintf('%.6F', $v), '0'), '.') : $v);
+        } catch (\InvalidArgumentException | \OverflowException) {
+            $this->errors[$key][] = 'Must be an amount with at most 2 decimals.';
+            return null;
+        }
+        if ($m->isNegative()) { $this->errors[$key][] = 'Must not be negative.'; return null; }
+        return $m;
+    }
+
+    public function url(string $key, bool $required = false): ?string
+    {
+        $v = $this->string($key, 8, 500, $required);
+        if ($v === null) { return null; }
+        if (!filter_var($v, FILTER_VALIDATE_URL) || !str_starts_with(strtolower($v), 'https://')) {
+            $this->errors[$key][] = 'Must be a valid https:// URL.';
+            return null;
+        }
+        return $v;
+    }
+
     public function addError(string $key, string $message): void
     {
         $this->errors[$key][] = $message;

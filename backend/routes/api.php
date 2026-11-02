@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 use LeenTrack\Core\{Lazy, Router};
-use LeenTrack\Http\Controllers\{AdminController, AuthController, BusinessController, HealthController, LocationController, MeController, StaffController};
+use LeenTrack\Http\Controllers\{AdminController, AuthController, BusinessController, CatalogController, HealthController, LocationController, MeController, StaffController};
 use LeenTrack\Services\Container;
 
 /**
@@ -16,6 +16,7 @@ return static function (Router $r, Container $c): void {
     $biz = new Lazy(fn () => new BusinessController($c->businesses(), $c->tenants()));
     $staff = new Lazy(fn () => new StaffController($c->staff()));
     $loc = new Lazy(fn () => new LocationController($c->locations()));
+    $cat = new Lazy(fn () => new CatalogController($c->categories(), $c->products(), $c->productImport(), $c->stock()));
     $admin = new Lazy(fn () => new AdminController($c->app()));
 
     $r->get('/health', [$health, 'show'], [], true);
@@ -53,6 +54,24 @@ return static function (Router $r, Container $c): void {
     $r->get('/locations/{id}', [$loc, 'show'], ['auth', 'tenant']);
     $r->patch('/locations/{id}', [$loc, 'update'], ['auth', 'tenant']);
     $r->delete('/locations/{id}', [$loc, 'remove'], ['auth', 'tenant']);
+
+    // --- catalogue & stock (all tenant-scoped; permissions enforced in services) ---
+    $r->get('/categories', [$cat, 'categoryIndex'], ['auth', 'tenant']);
+    $r->post('/categories', [$cat, 'categoryCreate'], ['auth', 'tenant']);
+    $r->patch('/categories/{id}', [$cat, 'categoryUpdate'], ['auth', 'tenant']);
+    $r->delete('/categories/{id}', [$cat, 'categoryDelete'], ['auth', 'tenant']);
+    $r->get('/products', [$cat, 'productIndex'], ['auth', 'tenant']);
+    $r->post('/products', [$cat, 'productCreate'], ['auth', 'tenant']);
+    $r->post('/products/import', [$cat, 'productImport'], ['auth', 'tenant', 'throttle:20,3600']);
+    $r->get('/products/export', [$cat, 'productExport'], ['auth', 'tenant', 'throttle:30,3600']);
+    $r->get('/products/{id}', [$cat, 'productShow'], ['auth', 'tenant']);
+    $r->patch('/products/{id}', [$cat, 'productUpdate'], ['auth', 'tenant']);
+    $r->delete('/products/{id}', [$cat, 'productArchive'], ['auth', 'tenant']);
+    $r->post('/products/{id}/restore', [$cat, 'productRestore'], ['auth', 'tenant']);
+    $r->post('/stock/adjustments', [$cat, 'stockAdjust'], ['auth', 'tenant']);
+    $r->get('/stock/levels', [$cat, 'stockLevels'], ['auth', 'tenant']);
+    $r->get('/stock/movements', [$cat, 'stockMovements'], ['auth', 'tenant']);
+    $r->get('/stock/valuation', [$cat, 'stockValuation'], ['auth', 'tenant']);
 
     // --- platform administration ---
     $r->get('/admin/stats', [$admin, 'stats'], ['auth', 'platform_admin']);

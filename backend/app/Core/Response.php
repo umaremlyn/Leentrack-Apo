@@ -36,6 +36,12 @@ final class Response
         return new self($status, $body === false ? '{"ok":false}' : $body, ['Content-Type' => 'application/json; charset=utf-8']);
     }
 
+    public static function csv(string $body, string $filename): self
+    {
+        $safe = preg_replace('/[^A-Za-z0-9._-]/', '_', $filename);
+        return new self(200, $body, ['Content-Type' => 'text/csv; charset=utf-8', 'Content-Disposition' => 'attachment; filename="' . $safe . '"']);
+    }
+
     public function withHeader(string $k, string $v): self
     {
         $this->headers[$k] = $v;

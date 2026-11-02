@@ -1,6 +1,6 @@
 # LeenTrack Rebuild — Project Status
 
-_Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current phase: **Phase 2 — Database & backend core: COMPLETE for identity, tenancy, authorization (verified below); Phase 3 next**_
+_Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current phase: **Phase 3 — Business operations: 3a (catalogue & stock) COMPLETE; 3b (customers/groups/loyalty) next**_
 
 ## Ground rules in force
 * Production (Vercel + Supabase) is **never touched**. `umaremlyn/Track` is read-only to this project (verified unmodified).
@@ -14,8 +14,34 @@ _Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current
 | 0 Source audit | ✅ docs 01–10 |
 | 1 Foundation | ✅ backend skeleton + migrator + rate limiter + Money; Flutter scaffold + adaptive shell + API client; docs 11–12 |
 | 2 Database & core (auth, tenancy, policies) | ✅ identity + tenancy + authorization + plan guard + audit; deployment guide drafted |
-| 3 Business operations | ⏳ **next** (3a catalogue/stock first) |
+| 3 Business operations | 🔶 3a catalogue & stock ✅ · 3b customers/groups/loyalty ⏳ next · 3c POS/sales/documents · 3d credit · 3e expenses/profit/dashboard · 3f suppliers/purchases · 3g transfers · 3h reports · 3i staff extras/account lifecycle · 3j billing · 3k admin · 3l settings/branding/cron |
 | 4–10 | ⏳ not started |
+
+## Session 4 report (Phase 3a — catalogue & stock)
+**Completed**
+* Migration `0004_catalogue_stock` (categories, products, per-outlet `stock_levels`, append-only `stock_movements`); applied / rolled back / reapplied.
+* Endpoints: categories CRUD; products list (filters, sort allow-list, pagination, LIKE-escaped search), create (opening stock), show, update, archive, restore, CSV **import** (validate/commit) and **export**; stock adjustments, levels, movements, valuation (cost & retail).
+* Rules reproduced from the source: service vs product (no stock/barcode/thresholds for services), reorder = given || min || 5, category delete leaves products uncategorised, case-insensitive category matching, CSV aliases / `cleanNumber` / service detection / row messages, RFC-4180 parser.
+* Rules improved (documented as D-21…D-25, G-23/G-24): stock only via audited movements, archive instead of delete, cost hidden from cashiers, plan limits on products/categories/import, barcode uniqueness per business, formula-injection-safe export, online stock can never go negative.
+* `HousekeepingService` + `bin/cron.php housekeeping`.
+
+**Tests executed (actual results)**
+| Suite | Result |
+|---|---|
+| `vendor/bin/phpunit` (unit + MySQL 8.4.6 integration) | **OK — 118 tests, 1,242 assertions** (27 new: catalogue, tenant isolation on every new route, stock invariants, outlet restriction, import/export, CSV parity, housekeeping, concurrency) |
+| Route-table security test (S-UNAUTH) | automatically covers every new route (no edits needed) |
+| Concurrency: 8 parallel PHP processes × 30 decrements against 120 units | exactly 120 sold / 120 refused; invariants hold — passes 3/3 |
+| Mutation check, 9 deliberate breakages (business scope on lookup, negative-stock guard, row locks, level lock, CSV formula guard, cost-price hiding, import plan limit, outlet-restricted stock, adjust permission) | **all caught** once the lock mutation was done right (see below) |
+
+**Test-quality finding (important):** my first concurrency test detected a deliberate removal of BOTH row locks only 1 time in 4. I rewrote it (synchronised start barrier, 8 workers, attempts = 2× stock); it now detects the removal 6/6 and still passes with locks 3/3. Removing only ONE of the two locks correctly goes unnoticed (the other still serialises), which is intended defence in depth.
+
+**Not done / not verified**
+* No sale, purchase or transfer touches stock yet — `StockService::applyDelta` is ready for them (3c/3f/3g). Until then stock changes only via adjustments/import/opening stock.
+* Product image upload (only a validated https `image_url`), bulk-edit, product variants (not in source), stock reservations (not in source).
+* Inventory valuation by cost uses the *current* cost price (no FIFO/average-cost layers; the source has none either).
+* Import is synchronous (≤2000 rows, 2 MB). Large catalogues need several files; chunked/resumable imports belong to the migration tooling (Phase 8).
+* The Flutter and web clients do not call these endpoints yet.
+* Concurrency was verified for stock adjustments only; refresh-token/invite races are still sequentially tested.
 
 ## Session 3 report (Phase 2)
 **Completed**
@@ -74,4 +100,4 @@ _Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current
 G-01 schema-only dump · G-02 data + `auth.users` export (only when ready for rehearsal) · G-03 which of 016–019 are applied · G-09 Flutterwave confirmation · G-10 SMS gateway · G-16 Truehost PHP facts (`phpinfo`) — and a **review of S-01/S-03/S-04/S-06 against the live project**, independent of this rebuild.
 
 ## Exact next task
-Phase 3a — catalogue & stock: migration `0004` (categories, products with `item_type`, `stock_levels`, `stock_movements`), `ProductService`/`CategoryService`/`StockService` with plan limits (`products`, `categories`), barcode uniqueness per business, archive-if-referenced, stock adjustments with reasons and movement history (invariant `Σ levels = stock_quantity`), CSV import (validate → commit, same alias rules as the source) and injection-safe CSV export; tests T-INV-1, T-STK-1, S-STOCK, S-XBIZ for every new route. Also add `bin/cron.php housekeeping` (purge rate limits and expired tokens).
+Phase 3b — customers, groups, loyalty: migration `0005` (`customer_groups`, `customers` incl. `group_id`, `date_of_birth`, `total_spent`, `visit_count`, `loyalty_points`; `loyalty_settings`, `loyalty_ledger`), `CustomerService`/`GroupService`/`LoyaltyService` (earn/redeem maths per docs/04 §7 with golden vectors computed from the source's `lib/loyalty/math.ts` and SQL logic), plan limit `customers`, customer search, purchase-history stub (filled by 3c), permissions (cashiers may create/read; manager+ update/delete/groups), points never editable via API; tests T-CUST-1, G-LOY-1, G-DISC-1, S-XBIZ on all new routes.

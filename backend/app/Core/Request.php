@@ -5,7 +5,8 @@ namespace LeenTrack\Core;
 
 final class Request
 {
-    public const MAX_BODY = 1_048_576; // 1 MB JSON
+    public const MAX_BODY = 2_097_152;   // hard cap on any body (2 MB)
+    public const MAX_JSON = 1_048_576;   // JSON bodies are capped at 1 MB
 
     /** @var array<string,mixed>|null */
     private ?array $json = null;
@@ -84,7 +85,7 @@ final class Request
         if ($this->rawBody === '') {
             return $this->json = [];
         }
-        if (strlen($this->rawBody) > self::MAX_BODY) {
+        if (strlen($this->rawBody) > self::MAX_JSON) {
             throw new ApiException('payload_too_large', 'Request body is too large.', 413);
         }
         $ct = strtolower((string) $this->header('content-type', ''));
@@ -100,6 +101,27 @@ final class Request
             throw new ApiException('invalid_json', 'Request body must be a JSON object.', 400);
         }
         return $this->json = $data;
+    }
+
+    /** Raw CSV text from a text/csv body (or JSON {"csv": "..."}); max 2 MB, UTF-8 only. */
+    public function csvText(): string
+    {
+        $ct = strtolower((string) $this->header('content-type', ''));
+        if (strlen($this->rawBody) > self::MAX_BODY) {
+            throw new ApiException('payload_too_large', 'File is too large (2 MB maximum).', 413);
+        }
+        if (str_starts_with($ct, 'text/csv') || str_starts_with($ct, 'text/plain')) {
+            $text = $this->rawBody;
+        } elseif (str_starts_with($ct, 'application/json')) {
+            $d = json_decode($this->rawBody, true);
+            $text = is_array($d) && is_string($d['csv'] ?? null) ? $d['csv'] : '';
+        } else {
+            throw new ApiException('unsupported_media_type', 'Send the file as text/csv.', 415);
+        }
+        if (!mb_check_encoding($text, 'UTF-8')) {
+            throw new ApiException('invalid_encoding', 'The file must be UTF-8 encoded.', 422);
+        }
+        return $text;
     }
 
     public function auth(): \LeenTrack\Http\AuthContext

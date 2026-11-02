@@ -50,6 +50,11 @@ MySQL-backed fixed window (`rate_limits`), usable on shared hosting. Applied per
 | D-18 | Tokens: opaque, SHA-256 at rest, access 15 min, refresh 30 d rotating; presenting a rotated refresh token revokes the session | theft detection. Clients MUST serialise refresh calls (a concurrent double refresh looks like reuse) |
 | D-19 | Billing columns (`plan*`, `paystack_*`) are not writable by any tenant endpoint; `PlanCatalog::effective()` applies expiry on every request | closes S-06 and stops access outliving payment before the nightly job |
 | D-20 | Registration/forgot/verify never reveal whether an e-mail exists; login errors are identical for unknown user and wrong password | no account enumeration |
+| D-21 | Product `stock_quantity` cannot be edited via product PATCH; all changes go through `StockService` (adjustments with reason, imports, later sales/purchases/transfers) | the source's edit form overwrote stock silently with no history; now every unit is accounted for in `stock_movements` |
+| D-22 | `DELETE /products/{id}` archives; barcode uniqueness applies to non-archived items (virtual generated column) | sale items and stock history must keep referencing the item; the source's hard delete either failed (RESTRICT) or destroyed the item |
+| D-23 | `cost_price` is hidden from roles without `products.cost.read` | the source exposed cost to cashiers through RLS; they only need the selling price |
+| D-24 | Stock mutation lock order: product row, then stock level row (both `FOR UPDATE`) | serialises concurrent changes without deadlocks; verified by an 8-process test |
+| D-25 | Online code can never drive stock below zero; only the offline-sync path (Phase 4) may, producing a visible `oversold` conflict | satisfies "two devices sell the last unit" without silently losing a sale |
 
 ## Phase 2 additions
 * **Schema:** migrations `0002_identity` (users, user_profiles, auth_sessions, user_tokens, platform_admins) and `0003_tenancy` (businesses, locations, business_members, member_outlets, audit_logs).
@@ -57,3 +62,9 @@ MySQL-backed fixed window (`rate_limits`), usable on shared hosting. Applied per
 * **Middleware:** `auth` / `auth:optional`, `tenant` (header) / `tenant:path`, `platform_admin`, `throttle:N,S`. Contexts: `AuthContext`, `TenantContext` (carries role, effective plan, outlet restriction; `require()`, `requireFeature()`, `requireWithinLimit()`).
 * **Validation:** `Validator` is whitelist-first (`only([...])`): unknown keys and privileged keys (`role`, `plan`, `status`, `user_id`, …) produce 422 before any work happens.
 * **Endpoints implemented:** see the route table in `routes/api.php` (auth, me, sessions, businesses, staff/invites, locations, admin/stats).
+
+## Phase 3a additions
+* **Schema:** `0004_catalogue_stock` — `categories`, `products` (with `item_type`, soft-archive, virtual `barcode_live` unique key), `stock_levels` (per outlet), `stock_movements` (append-only ledger).
+* **Invariants (tested after every mutation scenario):** `products.stock_quantity = SUM(stock_levels.quantity)`; each level equals the sum of its movements.
+* **Services:** `CategoryService`, `ProductService`, `StockService` (the only writer of stock), `ProductImportService`, `HousekeepingService` (+ `bin/cron.php housekeeping`).
+* **Shared helpers:** `Pager`, `Csv` (RFC-4180 parser equal to the source's; injection-safe writer), `Validator::money/int/url`.

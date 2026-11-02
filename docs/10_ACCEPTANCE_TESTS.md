@@ -4,7 +4,7 @@ A feature is complete only when its tests exist **and have been run with recorde
 
 Status log (authoritative record is `PROJECT_STATUS.md`):
 * End of Phase 0: nothing written.
-* End of Phase 2: **implemented and passing** — G-PLAN-1 (`PlanCatalogTest`), T-AUTH-1…5 (`AuthTest`), S-UNAUTH (route-table driven), S-XBIZ, S-ESC-STAFF, S-ESC-ADMIN, S-PLAN, S-TOKEN (partial: tampered/truncated/query/refresh-as-access/expired/revoked), S-SESSION (removal, deactivation, disabled user, password change/reset), S-IDOR for locations/staff/businesses, S-SQLI (auth + business name), error-leak test, audit-redaction test, M-AUTH fixture (legacy `$2a$` bcrypt). Everything else below is still **not written**.
+* End of Phase 2: **implemented and passing** — G-PLAN-1 (`PlanCatalogTest`), T-AUTH-1…5 (`AuthTest`), S-UNAUTH (route-table driven), S-XBIZ, S-ESC-STAFF, S-ESC-ADMIN, S-PLAN, S-TOKEN (partial: tampered/truncated/query/refresh-as-access/expired/revoked), S-SESSION (removal, deactivation, disabled user, password change/reset), S-IDOR for locations/staff/businesses, S-SQLI (auth + business name), error-leak test, audit-redaction test, M-AUTH fixture (legacy `$2a$` bcrypt). * End of Phase 3a: **implemented and passing** — T-INV-1 (CRUD, plan limits, barcode uniqueness, archive/restore, filters, import validate/commit, export), T-STK-1 (adjustments, per-outlet stock, invariants), S-STOCK, S-XBIZ for every catalogue/stock route, S-CSV (formula injection), valuation, outlet restriction, and a real **8-process concurrency test** (240 competing decrements, exactly the stock sold). Everything else below is still **not written**.
 
 ## A. Golden parity (derived from the source — prevents regressions in business meaning)
 
