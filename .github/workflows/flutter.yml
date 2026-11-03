@@ -1,0 +1,115 @@
+name: flutter
+# 1) analyze + unit/widget tests  2) end-to-end against the real PHP API + MySQL  3) build every platform and upload the result.
+# Builds point at a STAGING API: set the repository variable STAGING_API_URL (Settings > Secrets and variables > Actions > Variables).
+# Nothing here signs a store release or touches production.
+on:
+  push:
+    paths: ['apps/flutter/**', 'backend/**', 'tools/e2e/**', '.github/workflows/flutter.yml']
+  pull_request:
+    paths: ['apps/flutter/**', 'backend/**', 'tools/e2e/**', '.github/workflows/flutter.yml']
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: '3.47.9'   # the version the app was developed and tested with (Dart ^3.13)
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: apps/flutter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+
+  e2e:
+    runs-on: ubuntu-24.04
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci_root_pw
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci_root_pw"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: pdo_mysql, mbstring, openssl, sodium
+          coverage: none
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - run: composer install --no-interaction --prefer-dist
+        working-directory: backend
+      - run: flutter pub get
+        working-directory: apps/flutter
+      - name: End-to-end (real Dart client code against the real API)
+        run: tools/e2e/run.sh
+        env:
+          TEST_DB_USER: root
+          TEST_DB_PASS: ci_root_pw
+          TEST_DB_HOST: 127.0.0.1
+          TEST_DB_PORT: '3306'
+
+  build:
+    needs: test
+    # Only on manual runs and on pushes to the working branch, so pull requests from forks never build against your staging API.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: android, os: ubuntu-24.04, cmd: 'flutter build apk --release', out: 'apps/flutter/build/app/outputs/flutter-apk/app-release.apk' }
+          - { name: linux, os: ubuntu-24.04, cmd: 'flutter build linux --release', out: 'apps/flutter/build/linux/x64/release/bundle' }
+          - { name: windows, os: windows-2022, cmd: 'flutter build windows --release', out: 'apps/flutter/build/windows/x64/runner/Release' }
+          - { name: macos, os: macos-14, cmd: 'flutter build macos --release', out: 'apps/flutter/build/macos/Build/Products/Release/*.app' }
+          - { name: ios-unsigned, os: macos-14, cmd: 'flutter build ios --release --no-codesign', out: 'apps/flutter/build/ios/iphoneos/Runner.app' }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: apps/flutter
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require a staging API address
+        env:
+          URL: ${{ vars.STAGING_API_URL }}
+        run: |
+          if [ -z "$URL" ]; then echo "Set the repository variable STAGING_API_URL (a STAGING address, never production)."; exit 1; fi
+      - uses: actions/setup-java@v4
+        if: matrix.name == 'android'
+        with: { distribution: temurin, java-version: '17' }
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Linux build dependencies
+        if: matrix.name == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libsecret-1-dev libjsoncpp-dev libsqlite3-dev
+      - run: flutter pub get
+      - name: Build ${{ matrix.name }}
+        env:
+          API_URL: ${{ vars.STAGING_API_URL }}
+        run: ${{ matrix.cmd }} --dart-define=API_BASE_URL="$API_URL"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: leentrack-${{ matrix.name }}
+          path: ${{ matrix.out }}
+          if-no-files-found: error
+          retention-days: 14

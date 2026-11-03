@@ -20,6 +20,9 @@ _Last updated: 2026-11-03 · Branch: `claude/laughing-hypatia-gejtzf` · Current
 | 6 Desktop & more screens | 🔶 keyboard-first POS, sales history + PDF receipt, build guide ✅ · printing, native builds, other online screens ❌ (G-92…G-94) |
 | 7–10 | ⏳ not started |
 
+## Session 18b note (CI workflows)
+Added `.github/workflows/backend.yml` and `flutter.yml` (tests, end-to-end, five-platform builds with downloadable artifacts) and made `tools/e2e/run.sh` work over TCP as well as a socket. **Written but not run** — no GitHub runner is available here; both workflow files parse as valid YAML and the e2e script passed locally in both modes. Needs from you: Actions enabled, and the repository variable `STAGING_API_URL`.
+
 ## Session 18 report (Phase 6 — desktop usability, plus your two decisions)
 **Your decisions, implemented:** (1) **G-78 — offline sales are forced in.** A pushed sale is now recorded even when the shelf count would go below zero; both sales of "the last unit" exist and the count shows −1 until someone counts it. The *online* till still refuses to oversell. Reconciliation lists negative levels as "count and correct". The old "held for a manager" behaviour for stock is gone (price-changed holds remain). (2) **G-84 — no debt on a customer.** Nothing to build: accepting a higher price with short cash stays refused (`payment_short`) and never converts to credit; documented as decided.
 **Built:** keyboard-first POS (F2 search, Enter adds — a scanner typing barcode/SKU + Enter adds the exact match, F4 clear, F9 pay, Esc clear search); online sales history with the server's PDF receipt saved to the documents folder; binary download in the API client with the same single-flight token renewal; `docs/15_BUILD_AND_RELEASE.md` (per-platform needs, data locations, verification checklist); the two-pane desktop layout from Phase 5 is unchanged.

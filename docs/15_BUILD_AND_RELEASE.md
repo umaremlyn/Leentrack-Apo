@@ -2,6 +2,11 @@
 
 **Status: procedures only. No platform binary has been built by this project yet** (the sandbox has no Android SDK or desktop toolchains, and iOS/macOS need a Mac). Each platform is marked *verified* here only after someone builds it and runs the checklist at the bottom. Today verified: `flutter analyze`, `flutter test` (unit, widget, database, sync), and the end-to-end suite against the real PHP API.
 
+## Automatic builds (GitHub Actions) — written, NOT yet run
+`.github/workflows/backend.yml` runs the PHP tests on PHP 8.3 and 8.4 against MySQL 8.4. `.github/workflows/flutter.yml` runs analyze + tests, the end-to-end suite, then builds Android (APK), Linux, Windows, macOS and iOS (unsigned) and uploads each as a downloadable artifact (kept 14 days).
+**I could not run these here** (no GitHub runners in this sandbox), so treat the first run as the real test: expect to fix small things (a missing system library, an action version). Only the commands inside them were exercised locally (analyze, tests, the end-to-end script in both socket and TCP mode).
+To use them: push, open the repository's *Actions* tab, and (for builds) first add the repository variable `STAGING_API_URL` (Settings > Secrets and variables > Actions > Variables) — a STAGING address, never production; the build job refuses to run without it. Builds are unsigned: Android uses the debug key, macOS/iOS are not code-signed, so they are for testing on your own devices. Store releases need signing keys and an Apple developer account, kept as encrypted repository secrets, not in the code.
+
 ## Common
 ```bash
 cd apps/flutter

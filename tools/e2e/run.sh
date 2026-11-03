@@ -3,14 +3,17 @@
 # Needs: MySQL running (see TEST_DB_* below), php, flutter. Never points at production: the database name must start with leentrack_e2e.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-: "${TEST_DB_SOCKET:?set TEST_DB_SOCKET}" "${TEST_DB_USER:?}" "${TEST_DB_PASS:?}"
+: "${TEST_DB_USER:?}" "${TEST_DB_PASS:?}"
+# Either a unix socket (TEST_DB_SOCKET) or TCP (TEST_DB_HOST + TEST_DB_PORT, default 127.0.0.1:3306).
+TEST_DB_SOCKET="${TEST_DB_SOCKET:-}"; TEST_DB_HOST="${TEST_DB_HOST:-127.0.0.1}"; TEST_DB_PORT="${TEST_DB_PORT:-3306}"
+if [ -n "$TEST_DB_SOCKET" ]; then CONN=(-S "$TEST_DB_SOCKET"); APP_HOST=""; APP_PORT=0; else CONN=(-h "$TEST_DB_HOST" -P "$TEST_DB_PORT" --protocol=tcp); APP_HOST="$TEST_DB_HOST"; APP_PORT="$TEST_DB_PORT"; fi
 DB="${E2E_DB_NAME:-leentrack_e2e}"
 case "$DB" in leentrack_e2e*) ;; *) echo "refusing: database name must start with leentrack_e2e"; exit 2;; esac
 PORT="${E2E_PORT:-8099}"
-export APP_ENV=testing DB_HOST= DB_PORT=0 DB_SOCKET="$TEST_DB_SOCKET" DB_NAME="$DB" DB_USER="$TEST_DB_USER" DB_PASS="$TEST_DB_PASS" \
+export APP_ENV=testing DB_HOST="$APP_HOST" DB_PORT="$APP_PORT" DB_SOCKET="$TEST_DB_SOCKET" DB_NAME="$DB" DB_USER="$TEST_DB_USER" DB_PASS="$TEST_DB_PASS" \
   MAIL_DRIVER=file REQUIRE_EMAIL_VERIFICATION=false RATE_LIMIT_ENABLED=false LOG_LEVEL=error LOCK_DIR="$(mktemp -d)"
 MYSQL="${MYSQL_BIN:-mysql} --no-defaults"
-$MYSQL -u"$TEST_DB_USER" -p"$TEST_DB_PASS" -S "$TEST_DB_SOCKET" -e "DROP DATABASE IF EXISTS \`$DB\`; CREATE DATABASE \`$DB\` CHARACTER SET utf8mb4;"
+$MYSQL -u"$TEST_DB_USER" -p"$TEST_DB_PASS" "${CONN[@]}" -e "DROP DATABASE IF EXISTS \`$DB\`; CREATE DATABASE \`$DB\` CHARACTER SET utf8mb4;"
 php "$ROOT/backend/bin/migrate.php" up | tail -1
 php -S "127.0.0.1:$PORT" -t "$ROOT/backend/public" "$ROOT/backend/public/index.php" >/tmp/lt-e2e-php.log 2>&1 &
 PID=$!
