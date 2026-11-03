@@ -6,6 +6,7 @@ import '../../app_shell.dart';
 import '../customers/customers_screen.dart';
 import '../inventory/inventory_screen.dart';
 import '../pos/pos_screen.dart';
+import '../sales/sales_screen.dart';
 import '../settings/health_provider.dart';
 import '../sync/sync_screen.dart';
 
@@ -50,6 +51,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         'pos' => const PosScreen(),
         'customers' => const CustomersScreen(),
         'inventory' => const InventoryScreen(),
+        'sales' => const SalesScreen(),
         'dashboard' => const _ServerStatus(),
         _ => Center(child: Padding(padding: const EdgeInsets.all(24), child: Text('“$id” needs the server and is part of a later phase.', textAlign: TextAlign.center))),
       };

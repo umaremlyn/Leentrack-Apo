@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 // Manual live check (not part of the test suite): dart run tool/live_check.dart http://127.0.0.1:8099/api/v1
 import 'package:leentrack/network/api_client.dart';
 import 'package:leentrack/network/api_exception.dart';

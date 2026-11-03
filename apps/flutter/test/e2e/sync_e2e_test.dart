@@ -109,9 +109,8 @@ void main() {
     expect((await serverSales()).length, before);
   });
 
-  test('two devices racing for the last unit: the loser gets a conflict, keeps the sale, and it goes through after a restock', () async {
+  test('two tills sell the last unit: the offline sale is still recorded (owner decision G-78), stock goes to -1, nothing waits for a manager', () async {
     await engine.run(); // device sees Rice = 1
-    // another till sells the last Rice first (directly on the server)
     final other = await data(owner.post('/sales', body: {
       'client_operation_id': uuid.v4(),
       'outlet_id': locationId,
@@ -119,20 +118,19 @@ void main() {
       'payment': {'mode': 'full', 'method': 'cash', 'amount': '250.50'},
     }));
     expect(other['id'], isNotNull);
-    // this device is offline and still believes there is one
-    final c = cartFor(db.product(pB)!, 1);
+    final before = (await serverSales()).length;
+    final c = cartFor(db.product(pB)!, 1); // this device still believes there is one
     pos.checkout(c, locationId: locationId, credit: false, method: 'cash', amount: 25050);
-    final r1 = await engine.run();
-    expect(r1.conflicts, 1);
-    final op = db.outbox().single;
-    expect(op['status'], 'conflict');
-    expect(op['code'], 'insufficient_stock');
-    // a manager restocks, the device retries once the back-off has passed
-    await owner.post('/stock/adjustments', body: {'product_id': pB, 'location_id': locationId, 'delta': 2, 'reason': 'found'});
-    now = now.add(const Duration(minutes: 2));
-    final r2 = await engine.run();
-    expect(r2.applied, 1);
+    final r = await engine.run();
+    expect(r.applied, 1);
+    expect(r.conflicts, 0);
     expect(db.outbox(), isEmpty);
+    expect((await serverSales()).length, before + 1);
+    expect(db.available(pB, locationId), -1, reason: 'the pull shows the real, negative shelf count');
+    // a manager counts the shelf and corrects it
+    await owner.post('/stock/adjustments', body: {'product_id': pB, 'location_id': locationId, 'delta': 1, 'reason': 'correction'});
+    await engine.run();
+    expect(db.available(pB, locationId), 0);
   });
 
   test('price rose after the quote and the cash no longer covers it: held, accept-prices refuses without destroying it, a manager discards, the device drops it', () async {

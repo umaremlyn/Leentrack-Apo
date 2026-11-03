@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/providers.dart';
@@ -14,6 +15,36 @@ class PosScreen extends ConsumerStatefulWidget {
 
 class _PosScreenState extends ConsumerState<PosScreen> {
   String _q = '';
+  final _search = FocusNode();
+  final _searchCtl = TextEditingController();
+
+  @override
+  void dispose() {
+    _search.dispose();
+    _searchCtl.dispose();
+    super.dispose();
+  }
+
+  /// Enter in the search box. A barcode scanner types the code and presses Enter, so: an exact barcode or SKU adds that item; otherwise a
+  /// single remaining match adds it; several matches do nothing (the cashier picks).
+  void _submitSearch(String loc) {
+    final w = ref.read(sessionProvider).work!;
+    final q = _searchCtl.text.trim();
+    if (q.isEmpty) return;
+    final hits = w.db.products(search: q);
+    final exact = hits.where((p) => p['barcode'] == q || (p['sku'] as String?)?.toLowerCase() == q.toLowerCase()).toList();
+    final pick = exact.length == 1 ? exact.first : (hits.length == 1 ? hits.first : null);
+    if (pick == null) {
+      _toast(hits.isEmpty ? 'No product matches "$q".' : 'Several products match; pick one.');
+      WidgetsBinding.instance.addPostFrameCallback((_) => _search.requestFocus()); // Enter drops focus by default; a scanner must be able to scan again
+      return;
+    }
+    final err = ref.read(cartProvider.notifier).addProduct(pick, loc);
+    if (err != null) _toast(err);
+    _searchCtl.clear();
+    setState(() => _q = '');
+    WidgetsBinding.instance.addPostFrameCallback((_) => _search.requestFocus());
+  }
 
   String _location() {
     final w = ref.read(sessionProvider).work!;
@@ -36,7 +67,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     final list = Column(children: [
       Padding(
         padding: const EdgeInsets.all(8),
-        child: TextField(key: const Key('pos-search'), decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search name, SKU or barcode', border: OutlineInputBorder()), onChanged: (v) => setState(() => _q = v)),
+        child: TextField(key: const Key('pos-search'), focusNode: _search, controller: _searchCtl, autofocus: true, textInputAction: TextInputAction.search, onSubmitted: (_) => _submitSearch(loc), decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search name, SKU or barcode', border: OutlineInputBorder()), onChanged: (v) => setState(() => _q = v)),
       ),
       Expanded(
         child: ListView.builder(
@@ -62,7 +93,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       ),
     ]);
     final cart = cartView.cart;
-    return LayoutBuilder(builder: (context, c) {
+    final body = LayoutBuilder(builder: (context, c) {
       if (c.maxWidth >= 900) {
         return Row(children: [Expanded(child: list), const VerticalDivider(width: 1), SizedBox(width: 380, child: CartPanel(locationId: loc))]);
       }
@@ -81,6 +112,19 @@ class _PosScreenState extends ConsumerState<PosScreen> {
           ),
       ]);
     });
+    // Keyboard-first (desktop): F2 search · F4 clear cart · F9 checkout · Esc clears the search box.
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.f2): () => _search.requestFocus(),
+        const SingleActivator(LogicalKeyboardKey.f4): () => ref.read(cartProvider.notifier).clear(),
+        const SingleActivator(LogicalKeyboardKey.f9): () => payNow(context, ref, loc),
+        const SingleActivator(LogicalKeyboardKey.escape): () {
+          _searchCtl.clear();
+          setState(() => _q = '');
+        },
+      },
+      child: Focus(autofocus: true, child: body),
+    );
   }
 }
 
@@ -165,9 +209,15 @@ class CartPanel extends ConsumerWidget {
         child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Flexible(child: Text(a, style: s, overflow: TextOverflow.ellipsis)), const SizedBox(width: 8), Text(b, style: s)]));
   }
 
-  Future<void> _checkout(BuildContext context, WidgetRef ref) async {
-    final w = ref.read(sessionProvider).work!;
-    final cart = ref.read(cartProvider).cart;
+  Future<void> _checkout(BuildContext context, WidgetRef ref) => payNow(context, ref, locationId);
+}
+
+/// Opens the payment dialog for the current cart and queues the sale (shared by the button and the F9 shortcut).
+Future<void> payNow(BuildContext context, WidgetRef ref, String locationId) async {
+  final w = ref.read(sessionProvider).work!;
+  final cart = ref.read(cartProvider).cart;
+  if (cart.isEmpty) return;
+  {
     final res = await showDialog<_PayChoice>(context: context, builder: (_) => _PayDialog(total: cart.total, hasCustomer: cart.customerId != null));
     if (res == null || !context.mounted) return;
     try {

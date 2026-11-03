@@ -1,14 +1,17 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:leentrack/app/providers.dart';
+import 'package:flutter/services.dart';
 import 'package:leentrack/auth/authenticated_client.dart';
+import 'package:leentrack/features/sales/sales_screen.dart';
 import 'package:leentrack/auth/token_store.dart';
 import 'package:leentrack/data/local_db.dart';
+import 'package:leentrack/features/pos/cart_provider.dart';
 import 'package:leentrack/main.dart';
 import 'package:leentrack/network/api_client.dart';
 
@@ -42,7 +45,7 @@ class FakeServer implements HttpClientAdapter {
         return _ok({
           'changes': {
             'products': [
-              {'id': 'pa', 'name': 'Soap', 'item_type': 'product', 'selling_price': '100.00', 'is_active': true, 'reorder_level': 2},
+              {'id': 'pa', 'name': 'Soap', 'barcode': '6001234', 'sku': 'SOAP-1', 'item_type': 'product', 'selling_price': '100.00', 'is_active': true, 'reorder_level': 2},
               {'id': 'pb', 'name': 'Delivery', 'item_type': 'service', 'selling_price': '50.00', 'is_active': true},
             ],
             'locations': [{'id': 'L', 'name': 'Main', 'is_default': true}],
@@ -55,6 +58,12 @@ class FakeServer implements HttpClientAdapter {
         });
       case '/sync/operations':
         return _ok([]);
+      case '/sales':
+        return _ok([
+          {'id': 's1', 'receipt_number': 'R-0001', 'created_at': '2026-03-01T10:00:00.000Z', 'customer_name': null, 'total_amount': '200.00', 'payment_status': 'completed'},
+        ]);
+      case '/sales/s1/document':
+        return ResponseBody.fromBytes(utf8.encode('%PDF-fake'), 200, headers: {Headers.contentTypeHeader: ['application/pdf']});
       case '/health':
         return _ok({'status': 'ok', 'db': 'ok', 'version': 't'});
     }
@@ -65,7 +74,7 @@ class FakeServer implements HttpClientAdapter {
   void close({bool force = false}) {}
 }
 
-Future<(FakeServer, ProviderContainer)> boot(WidgetTester t, {String role = 'cashier'}) async {
+Future<(FakeServer, ProviderContainer)> boot(WidgetTester t, {String role = 'cashier', List<Override> extra = const []}) async {
   final server = FakeServer()..role = role;
   final dio = Dio(BaseOptions(baseUrl: 'http://x', responseType: ResponseType.plain, validateStatus: (_) => true))..httpClientAdapter = server;
   final store = MemoryTokenStore();
@@ -78,6 +87,7 @@ Future<(FakeServer, ProviderContainer)> boot(WidgetTester t, {String role = 'cas
       tokenStoreProvider.overrideWithValue(store),
       authClientProvider.overrideWith((ref) => AuthenticatedClient(api: ApiClient(baseUrl: 'http://x', dio: dio), store: store)),
       dbFactoryProvider.overrideWithValue((u, b) async => LocalDb.memory()),
+      ...extra,
     ],
     child: Consumer(builder: (c, ref, _) {
       container = ProviderScope.containerOf(c);
@@ -186,5 +196,54 @@ void main() {
     expect(find.text('Ada Obi'), findsOneWidget);
     expect(find.text('Not synced yet'), findsOneWidget);
     expect(c.read(sessionProvider).work!.db.outbox().single['type'], 'customer.create');
+  });
+
+  testWidgets('keyboard-first: a scanner (barcode + Enter) adds the item, F9 opens payment, F4 clears the cart', (t) async {
+    final (server, c) = await boot(t);
+    await signIn(t);
+    await t.enterText(find.byKey(const Key('pos-search')), '6001234');
+    await t.testTextInput.receiveAction(TextInputAction.search);
+    await t.pump();
+    expect(c.read(cartProvider).cart.quantityOf('pa'), 1);
+    await t.enterText(find.byKey(const Key('pos-search')), 'SOAP-1'); // SKU works too
+    await t.testTextInput.receiveAction(TextInputAction.search);
+    await t.pump();
+    expect(c.read(cartProvider).cart.quantityOf('pa'), 2);
+    await t.enterText(find.byKey(const Key('pos-search')), 'zzz');
+    await t.testTextInput.receiveAction(TextInputAction.search);
+    await t.pump();
+    expect(find.textContaining('No product matches'), findsOneWidget);
+    expect(c.read(cartProvider).cart.quantityOf('pa'), 2, reason: 'an unknown code changes nothing');
+
+    await t.sendKeyEvent(LogicalKeyboardKey.f9);
+    await t.pumpAndSettle();
+    expect(find.byKey(const Key('pay-confirm')), findsOneWidget);
+    await t.tap(find.text('Cancel'));
+    await t.pumpAndSettle();
+    await t.sendKeyEvent(LogicalKeyboardKey.f4);
+    await t.pump();
+    expect(c.read(cartProvider).cart.isEmpty, isTrue);
+    expect(server.pushed, isEmpty);
+  });
+
+  testWidgets('sales history lists the server sales and saves the PDF receipt; offline it explains instead of failing', (t) async {
+    final saved = <String, List<int>>{};
+    final (server, _) = await boot(t, extra: [receiptSaverProvider.overrideWithValue((name, bytes) async { saved[name] = bytes; return '/docs/$name'; })]);
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-sales')));
+    await t.pumpAndSettle();
+    expect(find.textContaining('R-0001'), findsOneWidget);
+    await t.tap(find.byKey(const Key('receipt-s1')));
+    await t.pumpAndSettle();
+    expect(saved.keys.single, 'receipt-R-0001.pdf');
+    expect(utf8.decode(saved.values.single), '%PDF-fake');
+    expect(find.textContaining('Receipt saved'), findsOneWidget);
+
+    server.offline = true;
+    await t.tap(find.byKey(const Key('nav-pos')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('nav-sales')));
+    await t.pumpAndSettle();
+    expect(find.textContaining('Offline'), findsWidgets);
   });
 }

@@ -7,7 +7,7 @@ Status: server side implemented in Phase 4 (see `backend/app/Sync/`). The Flutte
 1. **The server decides every number.** A device never sends prices, totals, tax, discounts-in-money or stock levels as facts. It sends *what the cashier did* (items and quantities, the amount tendered); the server prices it with the catalogue it has *now*.
 2. **Every operation has an id made on the device** (UUID v4) and is **safe to send again**. Sending an operation twice, ten times, in a different order, or after a crash never produces two sales.
 3. **Nothing is silently lost.** An operation that cannot be applied is kept, with its reason, in an inbox a manager works through (`conflict` / `rejected`). A sale that physically happened is never discarded by the server on its own.
-4. **No server invariant is bent for offline.** Stock never goes negative, prices are the server's, permissions are checked at apply-time against the cashier's *current* role.
+4. **Offline sales are forced in (owner decision G-78).** A sale that physically happened is recorded even if it takes the count below zero (the online till still refuses). Prices are the server's, permissions are checked at apply-time against the cashier's *current* role.
 5. **Time is the server's, corrected.** Records are dated when the cashier did the thing, corrected for the device's clock error, never in the future, never older than 60 days.
 
 ## 2. Endpoints (all need `Authorization: Bearer …` and `X-Business-Id`)
@@ -52,12 +52,12 @@ Request:
 | status | meaning | the device should |
 |---|---|---|
 | `applied` | done (also returned for a repeat: `duplicate: true`) | remove it from the queue; store `result` ids |
-| `conflict` | the world disagrees *right now* (`insufficient_stock`, `price_changed`, `not_found`, `dependency_missing`). It may succeed later or after a manager decides | keep it, show "needs attention"; **re-send later** (it is retried automatically) |
+| `conflict` | the world disagrees *right now* (`price_changed`, `not_found`, `dependency_missing`; `insufficient_stock` no longer occurs from sync). It may succeed later or after a manager decides | keep it, show "needs attention"; **re-send later** (it is retried automatically) |
 | `rejected` | will not succeed as sent (validation, permission, too old, wrong type) | stop retrying; show the reason; a manager may retry or discard |
 | `discarded` | a manager gave up on it | remove from queue |
 | `error` | server trouble (`server_error`). Nothing was recorded | **re-send** with back-off |
 
-Conflict codes: `insufficient_stock` (the last unit went to another device first), `price_changed` (only when the operation carried `expected_total`), `not_found` (e.g. repaying a sale that has not arrived yet), `dependency_missing` (the customer has not arrived yet).
+Conflict codes: `price_changed` (only when the operation carried `expected_total`), `not_found` (e.g. repaying a sale that has not arrived yet), `dependency_missing` (the customer has not arrived yet).
 
 ### 3.2 Operation types (version 1)
 
@@ -95,7 +95,7 @@ A sale is **provisional** until `push` answers `applied`. The receipt shown offl
 ## 6. Conflict policy in plain words
 | Situation | What happens | Who resolves |
 |---|---|---|
-| Two devices sell the last unit | first push wins; the second is `conflict / insufficient_stock` and waits | manager: restock/adjust, then **retry**; or discard |
+| Two devices sell the last unit | **both sales are recorded** (owner decision G-78); the shelf count goes negative until someone counts it; reconciliation lists it | manager: count and correct the stock |
 | Price changed after the customer was quoted | `conflict / price_changed` (only with `expected_total`) | manager: **accept-prices** (records at today's prices) or discard |
 | Customer created offline arrives after the sale that uses it | `conflict / dependency_missing`, then fine on re-send | automatic |
 | Cashier no longer on the team when retried | `409 user_inactive` | manager records manually, discards |

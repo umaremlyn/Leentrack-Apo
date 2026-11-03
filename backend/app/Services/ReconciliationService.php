@@ -42,7 +42,7 @@ final class ReconciliationService
                 'SELECT p.id FROM products p LEFT JOIN stock_levels l ON l.product_id = p.id GROUP BY p.id, p.stock_quantity HAVING p.stock_quantity <> COALESCE(SUM(l.quantity),0)'],
             'stock_levels_equal_movements' => ['each outlet level must equal the sum of its stock movements',
                 'SELECT l.product_id FROM stock_levels l LEFT JOIN (SELECT product_id, location_id, SUM(delta) d FROM stock_movements GROUP BY product_id, location_id) m ON m.product_id = l.product_id AND m.location_id = l.location_id WHERE l.quantity <> COALESCE(m.d,0)'],
-            'stock_never_negative' => ['no outlet may hold negative stock', 'SELECT product_id FROM stock_levels WHERE quantity < 0'],
+            'stock_never_negative' => ['no outlet holds negative stock (an offline sale of goods the server no longer had is recorded as it happened; count and correct the stock)', 'SELECT product_id FROM stock_levels WHERE quantity < 0'],
             'customer_spend_equals_money_received' => ['customers.total_spent must equal money actually received (checkout payments + repayments) on non-voided sales',
                 "SELECT c.id FROM customers c WHERE c.total_spent <> (SELECT COALESCE(SUM(LEAST(s.amount_paid, s.total_amount)),0) FROM sales s WHERE s.customer_id = c.id AND s.payment_status IN ('pending','completed'))
                     + (SELECT COALESCE(SUM(d.amount),0) FROM debt_repayments d JOIN sales s ON s.id = d.sale_id WHERE s.customer_id = c.id AND s.payment_status IN ('pending','completed'))"],

@@ -29,6 +29,30 @@ class ApiClient {
   Future<ApiResult> request(String method, String path, {Object? body, Map<String, dynamic>? query, Map<String, String>? headers}) =>
       _send(() => _dio.request<dynamic>(path, data: body, queryParameters: query, options: Options(method: method, headers: headers)));
 
+  /// Downloads a binary body (e.g. a PDF). Error answers are still the JSON envelope and become [ApiException]s.
+  Future<List<int>> getBytes(String path, {Map<String, dynamic>? query, Map<String, String>? headers}) async {
+    final Response<dynamic> res;
+    try {
+      res = await _dio.request<dynamic>(path, queryParameters: query, options: Options(method: 'GET', headers: headers, responseType: ResponseType.bytes));
+    } on DioException catch (e) {
+      if (e.type == DioExceptionType.badResponse || e.response != null) {
+        throw ApiException(code: 'bad_response', message: 'Unexpected response from server.', status: e.response?.statusCode);
+      }
+      throw const ApiException(code: 'network_error', message: 'Cannot reach the server.');
+    }
+    final bytes = (res.data as List<int>?) ?? const <int>[];
+    if ((res.statusCode ?? 0) >= 400) {
+      try {
+        final j = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+        final err = Map<String, dynamic>.from(j['error'] as Map);
+        throw ApiException(code: (err['code'] as String?) ?? 'error', message: (err['message'] as String?) ?? 'Request failed.', status: res.statusCode);
+      } on FormatException {
+        throw ApiException(code: 'bad_response', message: 'Unexpected response from server.', status: res.statusCode);
+      }
+    }
+    return bytes;
+  }
+
   Future<ApiResult> _send(Future<Response<dynamic>> Function() call) async {
     final Response<dynamic> res;
     try {

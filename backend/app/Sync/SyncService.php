@@ -145,7 +145,7 @@ final class SyncService
                 $body = $p; unset($body['client_operation_id']);
                 $body['client_operation_id'] = $opId;
                 $body['client_created_at'] = (new \DateTimeImmutable($occSql . ' UTC'))->format('Y-m-d\TH:i:s.v\Z');
-                $x = $this->sales->checkout($t, $body, null, $req, $occSql);
+                $x = $this->sales->checkout($t, $body, null, $req, $occSql, true);
                 $s = $x['sale'];
                 return ['sale_id' => $s['id'], 'receipt_number' => $s['receipt_number'], 'total_amount' => $s['total_amount'], 'payment_status' => $s['status'], 'replayed' => $x['replayed']];
             case 'credit.repay':

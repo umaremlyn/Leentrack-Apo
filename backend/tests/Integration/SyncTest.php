@@ -74,7 +74,6 @@ final class SyncTest extends ApiTestCase
     {
         $this->assertSame([], $this->pdo->query("SELECT p.id FROM products p LEFT JOIN stock_levels l ON l.product_id=p.id WHERE p.business_id='$bid' GROUP BY p.id, p.stock_quantity HAVING p.stock_quantity <> COALESCE(SUM(l.quantity),0)")->fetchAll(), 'total = Σ levels');
         $this->assertSame([], $this->pdo->query("SELECT l.product_id FROM stock_levels l LEFT JOIN (SELECT product_id, location_id, SUM(delta) d FROM stock_movements GROUP BY product_id, location_id) m ON m.product_id=l.product_id AND m.location_id=l.location_id WHERE l.business_id='$bid' AND l.quantity <> COALESCE(m.d,0)")->fetchAll(), 'level = Σ movements');
-        $this->assertSame([], $this->pdo->query("SELECT quantity FROM stock_levels WHERE business_id='$bid' AND quantity < 0")->fetchAll(), 'never negative');
     }
 
     // ================================================================================================ basics
@@ -239,8 +238,9 @@ final class SyncTest extends ApiTestCase
         $this->assertSame([1, 49], [$this->rows('sales'), $this->stock($p['id'])]);
     }
 
-    public function testTwoDevicesRaceForTheLastUnitAndTheLoserWaitsForAManager(): void
+    public function testTwoDevicesSellTheLastUnitAndBothSalesAreRecordedStockGoesNegativeAndOnlineStillRefuses(): void
     {
+        // Owner decision G-78: a sale that physically happened offline is forced in, never held for a manager.
         $o = $this->shop();
         $p = $this->product($o, 'Last one', '100.00', 1);
         $c1 = $this->addStaff($o, 'c1@example.com', 'cashier'); $c1['business_id'] = $o['business_id'];
@@ -249,28 +249,17 @@ final class SyncTest extends ApiTestCase
         $b = $this->op('sale.checkout', $this->sale([[$p, 1]]));
         $this->assertSame('applied', $this->results($this->push($c1, [$a], [], 'tablet-A000001')[1])[0]['status']);
         $rb = $this->results($this->push($c2, [$b], [], 'phone-B0000001')[1])[0];
-        $this->assertSame(['conflict', 'insufficient_stock'], [$rb['status'], $rb['code']]);
-        $this->assertSame([1, 0], [$this->rows('sales'), $this->stock($p['id'])]);
-        // the inbox: the loser sees her own, the other cashier sees nothing, a manager sees all
-        $mine = $this->call('GET', '/sync/operations', null, $c2['token'], $o['business_id'])[1];
-        $this->assertSame([[$b['id']], 'conflict'], [array_column($mine['data'], 'id'), $mine['data'][0]['status']]);
-        $this->assertEquals($this->sale([[$p, 1]]), $mine['data'][0]['payload'], 'the payload is kept so it can be retried');
-        $this->assertSame([], $this->call('GET', '/sync/operations', null, $c1['token'], $o['business_id'])[1]['data']);
-        $this->assertSame([$b['id']], array_column($this->call('GET', '/sync/operations', null, $o['token'], $o['business_id'])[1]['data'], 'id'));
-        $this->assertSame(403, $this->call('POST', "/sync/operations/{$b['id']}/retry", [], $c2['token'], $o['business_id'])[0], 'a cashier cannot overrule the conflict');
-        $this->assertSame(403, $this->call('POST', "/sync/operations/{$b['id']}/discard", ['reason' => 'because I say so'], $c2['token'], $o['business_id'])[0]);
-        // retrying while the stock is still 0 changes nothing
-        [$s, $j] = $this->call('POST', "/sync/operations/{$b['id']}/retry", [], $o['token'], $o['business_id']);
-        $this->assertSame([200, 'conflict', 'insufficient_stock'], [$s, $j['data']['status'], $j['data']['code']]);
-        // the manager finds one more unit (online) and retries: recorded as the CASHIER's sale
-        $this->assertSame(201, $this->call('POST', '/stock/adjustments', ['product_id' => $p['id'], 'location_id' => $this->main($o), 'delta' => 1, 'reason' => 'found'], $o['token'], $o['business_id'])[0]);
-        [$s, $j] = $this->call('POST', "/sync/operations/{$b['id']}/retry", [], $o['token'], $o['business_id']);
-        $this->assertSame([200, 'applied'], [$s, $j['data']['status']], json_encode($j));
-        $this->assertSame([2, 0], [$this->rows('sales'), $this->stock($p['id'])]);
-        $this->assertSame($c2['user_id'], $this->pdo->query("SELECT user_id FROM sales WHERE client_operation_id='{$b['id']}'")->fetchColumn());
-        $this->assertSame([], $this->call('GET', '/sync/operations', null, $o['token'], $o['business_id'])[1]['data'], 'nothing left waiting');
-        $this->assertSame('applied', $this->results($this->push($c2, [$b], [], 'phone-B0000001')[1])[0]['status'], 'and the phone, sending it again, is told it is done');
-        $this->assertSame(409, $this->call('POST', "/sync/operations/{$b['id']}/retry", [], $o['token'], $o['business_id'])[0], 'nothing to decide any more');
+        $this->assertSame('applied', $rb['status'], json_encode($rb));
+        $this->assertSame([2, -1], [$this->rows('sales'), $this->stock($p['id'])], 'both sales exist; the shelf count is now -1 until someone counts');
+        $this->assertSame([], $this->call('GET', '/sync/operations?status=attention', null, $o['token'], $o['business_id'])[1]['data'], 'nothing waits for a manager');
+        $this->assertSame(-1, (int) $this->pdo->query("SELECT SUM(quantity) FROM stock_levels WHERE product_id='{$p['id']}'")->fetchColumn());
+        // the online till is NOT relaxed: selling from -1 is refused and changes nothing
+        [$s, $j] = $this->call('POST', '/sales', ['client_operation_id' => \LeenTrack\Core\Uuid::v4(), 'items' => [['product_id' => $p['id'], 'quantity' => 1]], 'payment' => ['mode' => 'full', 'method' => 'cash', 'amount' => '1000']], $o['token'], $o['business_id']);
+        $this->assertSame([409, 'insufficient_stock'], [$s, $j['error']['code']]);
+        $this->assertSame([2, -1], [$this->rows('sales'), $this->stock($p['id'])]);
+        // the manager counts the shelf and the books agree again
+        $this->assertSame(201, $this->call('POST', '/stock/adjustments', ['product_id' => $p['id'], 'location_id' => $this->main($o), 'delta' => 1, 'reason' => 'correction'], $o['token'], $o['business_id'])[0]);
+        $this->assertSame(0, $this->stock($p['id']));
         $this->invariant($o['business_id']);
     }
 
@@ -278,7 +267,7 @@ final class SyncTest extends ApiTestCase
     {
         $o = $this->shop();
         $p = $this->product($o, 'Gone', '100.00', 0);
-        $a = $this->op('sale.checkout', $this->sale([[$p, 1]]));
+        $a = $this->op('sale.checkout', $this->sale([[$p, 1]], ['expected_total' => '90.00']));           // quoted 90, today 100: held
         $this->assertSame('conflict', $this->results($this->push($o, [$a])[1])[0]['status']);
         $this->assertSame(422, $this->call('POST', "/sync/operations/{$a['id']}/discard", ['reason' => 'x'], $o['token'], $o['business_id'])[0]);
         [$s, $j] = $this->call('POST', "/sync/operations/{$a['id']}/discard", ['reason' => 'Customer left without the goods'], $o['token'], $o['business_id']);
@@ -449,7 +438,7 @@ final class SyncTest extends ApiTestCase
         $same = $ops[0]; $same['payload'] = $this->sale([[$pb, 1]]);                     // A's operation UUID, B's content: independent namespaces
         $this->assertSame('applied', $this->results($this->push($b, [$same])[1])[0]['status']);
         $this->assertSame(2, $this->rows('sales'));
-        $conflict = $this->op('sale.checkout', $this->sale([[$pa, 50]]));
+        $conflict = $this->op('sale.checkout', $this->sale([[$pa, 1]], ['expected_total' => '1.00']));
         $this->assertSame('conflict', $this->results($this->push($a, [$conflict])[1])[0]['status']);
         $this->assertSame(404, $this->call('POST', "/sync/operations/{$conflict['id']}/retry", [], $b['token'], $b['business_id'])[0]);
         $this->assertNotContains($conflict['id'], array_column($this->call('GET', '/sync/operations', null, $b['token'], $b['business_id'])[1]['data'], 'id'), "B's inbox never shows A's operations (it holds only B's own rejection)");
@@ -462,7 +451,7 @@ final class SyncTest extends ApiTestCase
         $o = $this->shop();
         $p = $this->product($o, 'Rice', '100.00', 50);
         $done = $this->op('sale.checkout', $this->sale([[$p, 1]]));
-        $stuck = $this->op('sale.checkout', $this->sale([[$p, 500]]));
+        $stuck = $this->op('sale.checkout', $this->sale([[$p, 1]], ['expected_total' => '1.00']));
         $this->push($o, [$done, $stuck]);
         $this->pdo->exec("UPDATE sync_operations SET processed_at = '2020-01-01', received_at = '2020-01-01' WHERE client_operation_id IN ('{$done['id']}','{$stuck['id']}')");
         $r = $this->container->reconciliation()->run();
@@ -659,7 +648,7 @@ final class SyncTest extends ApiTestCase
         $this->invariant($o['business_id']);
     }
 
-    public function testSixDevicesRacingForTheLastUnitProduceExactlyOneSale(): void
+    public function testSixDevicesSellingTheLastUnitAtOnceAreAllRecordedWithExactStock(): void
     {
         $o = $this->shop();
         $p = $this->product($o, 'Last one', '100.00', 1);
@@ -671,9 +660,9 @@ final class SyncTest extends ApiTestCase
         }
         $statuses = array_map(fn ($b) => $b['data']['results'][0]['status'] . '/' . ($b['data']['results'][0]['code'] ?? ''), $this->bodies($procs));
         sort($statuses);
-        $this->assertSame(['applied/', 'conflict/insufficient_stock', 'conflict/insufficient_stock', 'conflict/insufficient_stock', 'conflict/insufficient_stock', 'conflict/insufficient_stock'], $statuses);
-        $this->assertSame([1, 0], [$this->rows('sales'), $this->stock($p['id'])]);
-        $this->assertSame(5, $this->rows('sync_operations', "status = 'conflict'"), 'the five losers are waiting for a manager, with their payloads');
+        $this->assertSame(array_fill(0, 6, 'applied/'), $statuses);
+        $this->assertSame([6, -5], [$this->rows('sales'), $this->stock($p['id'])], 'six real sales, six exact stock movements, no lost update');
+        $this->assertSame(0, $this->rows('sync_operations', "status = 'conflict'"));
         $this->invariant($o['business_id']);
     }
 }

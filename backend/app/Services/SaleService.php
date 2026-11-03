@@ -49,10 +49,11 @@ final class SaleService
      * @param array<string,mixed> $body
      * @return array{sale:array<string,mixed>,replayed:bool}
      */
-    public function checkout(TenantContext $t, array $body, ?string $idempotencyKey, Request $req, ?string $occurredAtUtc = null): array
+    public function checkout(TenantContext $t, array $body, ?string $idempotencyKey, Request $req, ?string $occurredAtUtc = null, bool $forceStock = false): array
     {
         $t->require('sales.create');
         $in = $this->parseCheckout($t, $body, $idempotencyKey);
+        $in['force_stock'] = $forceStock;                          // owner decision G-78: an offline sale that really happened is recorded even if stock goes negative (set only by the sync engine)
         $in['occurred_at'] = $occurredAtUtc;                       // set only by the offline sync engine: when the sale really happened (server-adjusted for clock skew)
         $bid = $t->businessId;
 
@@ -192,7 +193,7 @@ final class SaleService
         foreach ($ids as $pid) {                                   // ascending ids = lock order
             $l = array_values(array_filter($lines, fn ($x) => $x['product_id'] === $pid))[0];
             if ($l['type'] === 'product') {
-                $this->stock->applyDelta($bid, $pid, $outlet, -$in['items'][$pid], 'sale', 'sale', $saleId, null, $t->userId);
+                $this->stock->applyDelta($bid, $pid, $outlet, -$in['items'][$pid], 'sale', 'sale', $saleId, null, $t->userId, (bool) ($in['force_stock'] ?? false));
             }
         }
 

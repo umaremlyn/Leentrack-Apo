@@ -45,6 +45,19 @@ class AuthenticatedClient {
     }
   }
 
+  Future<List<int>> getBytes(String path, {Map<String, dynamic>? query}) async {
+    Future<List<int>> once() => api.getBytes(path, query: query, headers: {
+          'Authorization': ?(_access == null ? null : 'Bearer $_access'),
+          'X-Business-Id': ?businessId,
+        });
+    try {
+      return await once();
+    } on ApiException catch (e) {
+      if (!_looksExpired(e) || !await _refresh()) rethrow;
+      return once();
+    }
+  }
+
   Future<ApiResult> _once(String method, String path, Object? body, Map<String, dynamic>? query, bool needsBusiness) {
     final h = <String, String>{};
     if (_access != null) h['Authorization'] = 'Bearer $_access';
