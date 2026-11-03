@@ -41,10 +41,10 @@ final class TransferService
         $loc = null;
         if (isset($q['location_id'])) {
             if (!is_string($q['location_id']) || !Uuid::isValid($q['location_id'])) { throw ApiException::validation(['location_id' => ['Must be a valid id.']]); }
-            if (!$t->canAccessOutlet($q['location_id'])) { throw ApiException::notFound('Outlet not found.'); }
+            if (!$t->canAccessOutlet($q['location_id']) || !$this->catalog->locationExists($t->businessId, $q['location_id'])) { throw ApiException::notFound('Outlet not found.'); }
             $loc = $q['location_id'];
         }
-        $f = ['status' => $status, 'location_id' => $loc, 'from' => $this->qDate($q, 'from', 0), 'to' => $this->qDate($q, 'to', 1),
+        $f = ['status' => $status, 'location_id' => $loc, 'from' => $this->qDate($t, $q, 'from', 0), 'to' => $this->qDate($t, $q, 'to', 1),
             'search' => isset($q['search']) ? (is_string($q['search']) && $q['search'] !== '' && mb_strlen($q['search']) <= 100 ? $q['search'] : throw ApiException::validation(['search' => ['Must be text up to 100 characters.']])) : null];
         $pg = Pager::fromQuery($q, 50);
         $r = $this->repo->list($t->businessId, $f, $t->outletIds, $pg->perPage, $pg->offset());
@@ -331,12 +331,13 @@ final class TransferService
         return Clock::now()->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s.v');
     }
 
-    /** @param array<string,mixed> $q */
-    private function qDate(array $q, string $k, int $plusDays): ?string
+    /** Start of the given LOCAL day (+$plusDays) in the business time zone, as a UTC instant. @param array<string,mixed> $q */
+    private function qDate(TenantContext $t, array $q, string $k, int $plusDays): ?string
     {
         if (!isset($q[$k])) { return null; }
-        $d = is_string($q[$k]) ? \DateTimeImmutable::createFromFormat('!Y-m-d', $q[$k], new \DateTimeZone('UTC')) : false;
+        $tz = new \DateTimeZone($this->catalog->businessTimezone($t->businessId));
+        $d = is_string($q[$k]) ? \DateTimeImmutable::createFromFormat('!Y-m-d', $q[$k], $tz) : false;
         if (!$d || $d->format('Y-m-d') !== $q[$k]) { throw ApiException::validation([$k => ['Must be a date as YYYY-MM-DD.']]); }
-        return $d->modify("+$plusDays day")->format('Y-m-d H:i:s');
+        return $d->modify("+$plusDays day")->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
     }
 }

@@ -182,6 +182,21 @@ final class CatalogRepository
         $this->pdo->prepare('UPDATE products SET archived_at = ' . ($archived ? 'CURRENT_TIMESTAMP(3), is_active = 0' : 'NULL') . ' WHERE business_id = ? AND id = ?')->execute([$bid, $id]);
     }
 
+    /** The business time zone = the default outlet's zone (same rule as sales, profit and reports). */
+    public function businessTimezone(string $bid): string
+    {
+        $st = $this->pdo->prepare('SELECT timezone FROM locations WHERE business_id = ? AND is_default = 1 LIMIT 1');
+        $st->execute([$bid]);
+        return (string) ($st->fetchColumn() ?: 'Africa/Lagos');
+    }
+
+    public function locationExists(string $bid, string $locationId): bool
+    {
+        $st = $this->pdo->prepare('SELECT 1 FROM locations WHERE business_id = ? AND id = ?');
+        $st->execute([$bid, $locationId]);
+        return (bool) $st->fetchColumn();
+    }
+
     public function locationBelongs(string $bid, string $locationId): bool
     {
         $st = $this->pdo->prepare('SELECT 1 FROM locations WHERE business_id = ? AND id = ? AND is_active = 1');

@@ -90,10 +90,10 @@ final class ReportTest extends ApiTestCase
     public function testPermissionsPlanTenantsAndInputValidation(): void
     {
         $a = $this->shop('a@example.com'); $b = $this->shop('b@example.com');
-        $this->assertSame(8, count($this->call('GET', '/reports', null, $a['token'], $a['business_id'])[1]['data']));
+        $this->assertSame(9, count($this->call('GET', '/reports', null, $a['token'], $a['business_id'])[1]['data']));
         $cashier = $this->addStaff($a, 'cash@example.com', 'cashier');
         $this->assertSame(403, $this->call('GET', '/reports', null, $cashier['token'], $a['business_id'])[0]);
-        foreach (['sales', 'profit', 'inventory', 'expenses', 'credit', 'purchases', 'outlets', 'products'] as $n) {
+        foreach (['sales', 'profit', 'inventory', 'expenses', 'credit', 'purchases', 'outlets', 'products', 'customers'] as $n) {
             $this->assertSame(403, $this->rep($a, $n, '', $cashier['token'])[0], "cashier $n");
             $this->assertSame(200, $this->rep($a, $n)[0], "owner $n");
         }
@@ -112,7 +112,7 @@ final class ReportTest extends ApiTestCase
         [$s, $j] = $this->rep($f, 'sales', '?format=csv');
         $this->assertSame([402, 'feature_not_in_plan'], [$s, $j['error']['code']]);
         // another business's outlet id is not usable
-        $this->assertSame(['sales' => 0], ['sales' => $this->rep($b, 'sales', '?outlet_id=' . $this->main($a))[1]['meta']['summary']['sales']], "B sees none of A's sales");
+        $this->assertSame(404, $this->rep($b, 'sales', '?outlet_id=' . $this->main($a))[0], "another business's outlet id is 'not found'");
     }
 
     // ================================================================================================ sales
@@ -294,7 +294,7 @@ final class ReportTest extends ApiTestCase
     public function testEmptyBusinessReportsAreZerosNotErrors(): void
     {
         $o = $this->shop();
-        foreach (['sales', 'profit', 'inventory', 'expenses', 'credit', 'purchases', 'outlets', 'products'] as $n) {
+        foreach (['sales', 'profit', 'inventory', 'expenses', 'credit', 'purchases', 'outlets', 'products', 'customers'] as $n) {
             [$s, $j] = $this->rep($o, $n);
             $this->assertSame([200, 0], [$s, $n === 'outlets' ? 0 : count($j['data'])], $n);
             [$cs, $rows] = $this->csv($o, $n);

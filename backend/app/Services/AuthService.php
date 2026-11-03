@@ -103,20 +103,23 @@ final class AuthService
         $ok = false;
         if ($u === null) {
             $this->hasher->dummyVerify((string) $password);
-        } elseif ($u['status'] !== 'active') {
+        } elseif (!in_array($u['status'], ['active', 'pending_deletion'], true)) {
             $this->hasher->dummyVerify((string) $password);
         } elseif ($u['password_hash'] !== null) {
             $ok = $this->hasher->verify((string) $password, (string) $u['password_hash']);
             if ($ok && $this->hasher->needsRehash((string) $u['password_hash'])) {
-                $this->users->setPassword((string) $u['id'], $this->hasher->hash((string) $password));
+                $this->users->setPassword((string) $u['id'], $this->hasher->hash((string) $password), false);
             }
         } elseif ($u['legacy_bcrypt_hash'] !== null) {
             // One-time transition for migrated accounts: verify the old bcrypt hash, store a fresh hash, drop the old one.
             $ok = $this->hasher->verifyLegacyBcrypt((string) $password, (string) $u['legacy_bcrypt_hash']);
             if ($ok) {
                 // Deliberately no strength check here: a migrated user must not be locked out by our stricter policy.
-                $this->users->setPassword((string) $u['id'], $this->hasher->hash((string) $password));
-                $this->audit->log('auth.legacy_hash_upgraded', $req, (string) $u['id']);
+                $weak = $this->hasher->problems((string) $password, (string) $email) !== [];
+                $this->users->setPassword((string) $u['id'], $this->hasher->hash((string) $password), false);
+                // Soft enforcement (G-21): never locked out, but clients are told to ask for a stronger password.
+                if ($weak) { $this->users->setMustChangePassword((string) $u['id'], true); $u['must_change_password'] = 1; }
+                $this->audit->log('auth.legacy_hash_upgraded', $req, (string) $u['id'], null, null, null, null, ['weak_password' => $weak]);
             }
         } else {
             $this->hasher->dummyVerify((string) $password);   // account with no credential: must use reset flow
@@ -125,6 +128,9 @@ final class AuthService
         if (!$ok || $u === null) {
             $this->audit->log('auth.login_failed', $req, $u['id'] ?? null, null, null, null, null, ['email_hash' => substr(hash('sha256', (string) $email), 0, 16)]);
             throw new ApiException('invalid_credentials', 'Invalid e-mail or password.', 401);
+        }
+        if ($u['status'] === 'pending_deletion') {
+            throw new ApiException('account_pending_deletion', 'This account is scheduled for deletion on ' . substr((string) $u['deletion_scheduled_at'], 0, 10) . '. You can cancel the deletion before then.', 403);
         }
         if ($this->cfg['require_email_verification'] && $u['email_verified_at'] === null) {
             throw new ApiException('email_not_verified', 'Please verify your e-mail address before signing in.', 403);
@@ -262,6 +268,8 @@ final class AuthService
             'email_verified' => $u['email_verified_at'] !== null,
             'full_name' => $p['full_name'] ?? null, 'address' => $p['address'] ?? null, 'currency' => $p['currency'] ?? 'NGN',
             'is_platform_admin' => $this->users->isPlatformAdmin((string) $u['id']),
+            'must_change_password' => (bool) ($u['must_change_password'] ?? 0),
+            'has_avatar' => ($p['avatar_path'] ?? null) !== null,
         ];
     }
 }

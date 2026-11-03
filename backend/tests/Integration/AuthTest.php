@@ -261,6 +261,7 @@ final class AuthTest extends ApiTestCase
         $this->assertSame('owner', $j['data']['memberships'][0]['role']);
         $this->assertContains('staff.manage', $j['data']['memberships'][0]['permissions']);
         $this->assertFalse($j['data']['user']['is_platform_admin']);
-        foreach (['password', 'hash', 'legacy'] as $leak) { $this->assertStringNotContainsString($leak, strtolower($res->body)); }
+        $body = str_replace('must_change_password', '', strtolower($res->body));      // a boolean flag, not a secret
+        foreach (['password', 'hash', 'legacy'] as $leak) { $this->assertStringNotContainsString($leak, $body); }
     }
 }

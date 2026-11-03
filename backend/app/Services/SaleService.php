@@ -220,7 +220,7 @@ final class SaleService
             'customer_id' => $this->uuid($q, 'customer_id'), 'outlet_id' => $this->uuid($q, 'outlet_id'),
             'search' => isset($q['search']) && is_string($q['search']) && $q['search'] !== '' && mb_strlen($q['search']) <= 100 ? $q['search'] : (isset($q['search']) ? throw ApiException::validation(['search' => ['Must be text up to 100 characters.']]) : null),
         ];
-        if ($f['outlet_id'] !== null && !$t->canAccessOutlet($f['outlet_id'])) { return ['rows' => [], 'meta' => (new Pager(1, 50))->meta(0) + ['summary' => ['count' => 0, 'total' => '0.00']]]; }
+        if ($f['outlet_id'] !== null && (!$t->canAccessOutlet($f['outlet_id']) || !$this->catalog->locationExists($t->businessId, $f['outlet_id']))) { throw ApiException::notFound('Outlet not found.'); }
         $pg = Pager::fromQuery($q, 50);
         $r = $this->sales->list($t->businessId, $f, $t->outletIds, $pg->perPage, $pg->offset());
         $rows = array_map(fn ($s) => [
@@ -283,11 +283,24 @@ final class SaleService
         return $out;
     }
 
-    /** Receipt / invoice document (JSON). `format=pdf` is not implemented yet and says so. @return array<string,mixed> */
-    public function document(TenantContext $t, string $id, string $format): array
+    /** Receipt / invoice document model (JSON). @return array<string,mixed> */
+    public function document(TenantContext $t, string $id, string $format = 'json'): array
     {
         $t->require('sales.read');
-        if ($format !== 'json') { throw new ApiException('not_implemented', 'Only format=json is available; server-side PDF is planned.', 501); }
+        return $this->documentModel($t, $id);
+    }
+
+    /** The same document as a PDF (see Documents\PdfRenderer for its stated limits). @return array{0:string,1:string} [bytes, file name] */
+    public function documentPdf(TenantContext $t, string $id): array
+    {
+        $t->require('sales.read');
+        $doc = $this->documentModel($t, $id);
+        return [\LeenTrack\Services\Documents\PdfRenderer::render($doc), (string) $doc['file_name']];
+    }
+
+    /** @return array<string,mixed> */
+    private function documentModel(TenantContext $t, string $id): array
+    {
         $d = $this->detail($t, $id);
         $biz = $this->sales->businessInfo($t->businessId) ?? throw ApiException::notFound();
         $m = fn (string $x) => Money::parse($x);

@@ -87,7 +87,7 @@ final class KernelTest extends TestCase
     /** Route-table security guard: the ONLY anonymous endpoints. Adding a public route requires editing this list on purpose. */
     private const PUBLIC_ALLOW_LIST = [
         'GET /health', 'POST /auth/register', 'POST /auth/login', 'POST /auth/refresh', 'POST /auth/forgot-password',
-        'POST /auth/reset-password', 'POST /auth/verify-email', 'POST /auth/resend-verification', 'POST /invites/accept',
+        'POST /auth/reset-password', 'POST /auth/cancel-deletion', 'POST /auth/verify-email', 'POST /auth/resend-verification', 'POST /invites/accept',
     ];
 
     public function testOnlyExplicitlyPublicRoutesExist(): void

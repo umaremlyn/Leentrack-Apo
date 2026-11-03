@@ -1,6 +1,6 @@
 # LeenTrack Rebuild — Project Status
 
-_Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current phase: **Phase 3 — Business operations: 3a ✅ · 3b ✅ · 3c ✅ · 3d ✅ · 3e ✅ · 3f ✅ · 3g ✅ · 3h (reports & CSV export) COMPLETE; 3i (staff extras / account lifecycle) next**_
+_Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current phase: **Phase 3 — Business operations: 3a ✅ · 3b ✅ · 3c ✅ · 3d ✅ · 3e ✅ · 3f ✅ · 3g ✅ · 3h ✅ · 3i (account lifecycle, staff outlets) COMPLETE + gap sweep; 3j (billing) next**_
 
 ## Ground rules in force
 * Production (Vercel + Supabase) is **never touched**. `umaremlyn/Track` is read-only to this project (verified unmodified).
@@ -14,8 +14,17 @@ _Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current
 | 0 Source audit | ✅ docs 01–10 |
 | 1 Foundation | ✅ backend skeleton + migrator + rate limiter + Money; Flutter scaffold + adaptive shell + API client; docs 11–12 |
 | 2 Database & core (auth, tenancy, policies) | ✅ identity + tenancy + authorization + plan guard + audit; deployment guide drafted |
-| 3 Business operations | 🔶 3a catalogue & stock ✅ · 3b customers/groups/loyalty ✅ · 3c POS/sales/documents ✅ · 3d credit ✅ · 3e expenses/profit/dashboard ✅ · 3f suppliers/purchases ✅ · 3g transfers ✅ · 3h reports ✅ · 3i staff extras/account lifecycle ⏳ next · 3h reports · 3i staff extras/account lifecycle · 3j billing · 3k admin · 3l settings/branding/cron |
+| 3 Business operations | 🔶 3a catalogue & stock ✅ · 3b customers/groups/loyalty ✅ · 3c POS/sales/documents ✅ · 3d credit ✅ · 3e expenses/profit/dashboard ✅ · 3f suppliers/purchases ✅ · 3g transfers ✅ · 3h reports ✅ · 3i account lifecycle + gap sweep ✅ · 3j billing ⏳ next · 3h reports · 3i staff extras/account lifecycle · 3j billing · 3k admin · 3l settings/branding/cron |
 | 4–10 | ⏳ not started |
+
+## Session 12 report (Phase 3i — account lifecycle and staff outlets, plus the gap sweep you asked for)
+**Completed (3i):** `PUT /staff/{id}/outlets` (restrict a member to outlets, empty list = all); `must_change_password` soft enforcement for weak migrated passwords (G-21); `GET /me/export` and owner-only paged `GET /businesses/{id}/export`; account deletion with a 14-day grace (`POST /me/deletion`, `POST /auth/cancel-deletion`) and the `cron purge-accounts` job that deletes the owner's business data and anonymises the user; profile-picture upload/read/remove (`/me/avatar`). Migrations `0011_account_lifecycle`, `0012_supplier_payments`.
+**Completed (gap sweep, per your instruction):** every gap in docs/09 now has a status in a resolution log at the top of that file. Fixed in code: G-22 SMTP mailer, G-31 server PDF for receipts/invoices, G-38 foreign outlet = 404 everywhere, G-40 supplier payments and balances, G-41/G-48 business-time-zone date filters, G-43 `supplier_return` stock reason, G-49 customers report (the one production export that was missing), G-50 configurable and tested report cap, G-13/G-15 (deletion/retention and avatars), G-28/G-39 already resolved earlier. Seven new items G-52…G-57 are recorded so nothing is silent.
+**Tests executed (actual):** full suite against MySQL 8.4.6 → **OK, 268 tests, 55,650 assertions**. New: `AccountTest` (10), `GapFixesTest` (12), `PdfRendererTest` (4, output read back by `pdftotext` and `pypdf`), SMTP tested against a local fake SMTP server, plus PDF assertions in `SalesTest`.
+**Mutation checks (28 on the new code):** first run 5 survivors, all of them weaknesses in MY tests, not in the product code: (1) cancelling a deletion could have revived old sessions — now asserted; (2) the purge's re-check under lock had no test — now tested via reflection; (3) my "silent re-hash keeps the flag" test read the response instead of the database; (4) my GIF sample was too small, so it was refused for the wrong reason; (5) the supplier-payment race test was too weak to notice a missing lock. All five fixed and re-run: all caught (the lock one over 3 runs).
+**Changes in behaviour you should know about (all deliberate, all listed in docs/09):** foreign/non-existent outlet filters now answer 404 instead of an empty 200 (this also changed `/sales?outlet_id=`); login can now answer `account_pending_deletion`; the first public route added since Phase 2 is `POST /auth/cancel-deletion` (the route allow-list test was updated on purpose).
+**Not done / not verified:** TLS handshake of the SMTP client against a real server (needs credentials); no ownership transfer (an owner with a team must remove the team before deleting); payment-receipt PDFs (repayments) still JSON only; the PDF is a clean typeset receipt, not a pixel copy of the web canvas design; clients do not use any of this yet; no real data; PHP 8.3.6.
+**Current phase:** 3 (3a–3i done). **Next task:** Phase 3j — billing: Paystack with server-side verification of every payment (never trust the client), idempotent webhooks with signature check, plan upgrade/expiry cron, billing history, subscription payment records retained pseudonymised (G-54). Flutterwave only if you confirm (G-09). Needs Paystack sandbox keys from you for any live check; everything else is built against recorded fixtures.
 
 ## Session 11 report (Phase 3h — reports and CSV export)
 **Completed:** `ReportService` + `ReportController`, three read queries in `ReportRepository`; `GET /reports` and `GET /reports/{sales|profit|inventory|expenses|credit|purchases|outlets|products}` with JSON (paged) and CSV (whole report, BOM, quoting, formula-injection-safe, plan-gated `exportReports`). Every report reuses the module that owns the number (profit, expenses, credit, valuation, dashboard counts) so no figure has two definitions. Docs 05, 09 (G-49…G-51), 10, 11 (D-60…D-65) updated.
@@ -215,4 +224,4 @@ _Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current
 G-01 schema-only dump · G-02 data + `auth.users` export (only when ready for rehearsal) · G-03 which of 016–019 are applied · G-09 Flutterwave confirmation · G-10 SMS gateway · G-16 Truehost PHP facts (`phpinfo`) — and a **review of S-01/S-03/S-04/S-06 against the live project**, independent of this rebuild.
 
 ## Exact next task
-Phase 3i — staff extras and account lifecycle (see Session 11 report).
+Phase 3j — billing (Paystack, server-verified, idempotent webhooks, plan expiry). See Session 12 report.

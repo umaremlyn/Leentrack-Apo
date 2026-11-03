@@ -90,6 +90,40 @@ final class StaffService
         return $this->view($this->repo->member($t->businessId, $memberId) ?? []);
     }
 
+    /**
+     * Restrict a member to some outlets, or lift the restriction with an empty list. Owners are never restricted.
+     * @param array<string,mixed> $body @return array<string,mixed>
+     */
+    public function setOutlets(TenantContext $t, string $memberId, array $body, Request $req): array
+    {
+        $t->require('staff.manage');
+        $t->requireFeature('locations');
+        $m = $this->repo->member($t->businessId, $memberId) ?? throw ApiException::notFound();
+        if ($m['role'] === 'owner') { throw ApiException::conflict('owner_unrestricted', 'The owner can always use every outlet.'); }
+        $v = new Validator($body);
+        $v->only(['outlet_ids']);
+        $raw = $body['outlet_ids'] ?? null;
+        $ids = [];
+        if (!is_array($raw) || !array_is_list($raw) || count($raw) > 100) { $v->addError('outlet_ids', 'Provide a list of outlet ids (empty = all outlets).'); }
+        else {
+            foreach ($raw as $i => $id) {
+                if (!is_string($id) || !Uuid::isValid($id)) { $v->addError("outlet_ids.$i", 'Must be a valid id.'); continue; }
+                $ids[$id] = true;
+            }
+        }
+        $v->done();
+        $ids = array_keys($ids);
+        foreach ($ids as $id) {
+            $loc = $this->repo->location($t->businessId, $id);
+            if ($loc === null || !(int) $loc['is_active']) { throw ApiException::validation(['outlet_ids' => ['Outlet not found.']]); }
+        }
+        $before = $this->repo->memberOutlets($memberId);
+        Db::transaction($this->pdo, fn () => $this->repo->setMemberOutlets($memberId, $ids));
+        // A restriction applies to the person's NEXT request (access is resolved per request); nothing to revoke.
+        $this->audit->log('staff.outlets', $req, $t->userId, $t->businessId, 'member', $memberId, ['outlet_ids' => $before], ['outlet_ids' => $ids]);
+        return $this->view($this->repo->member($t->businessId, $memberId) ?? []);
+    }
+
     public function remove(TenantContext $t, string $memberId, Request $req): void
     {
         $t->require('staff.manage');
@@ -166,6 +200,7 @@ final class StaffService
     /** @param array<string,mixed> $m @return array<string,mixed> */
     private function view(array $m): array
     {
-        return ['id' => $m['id'], 'name' => $m['name'], 'email' => $m['email'], 'role' => $m['role'], 'status' => $m['status'], 'joined_at' => $m['joined_at'], 'created_at' => $m['created_at']];
+        return ['id' => $m['id'], 'name' => $m['name'], 'email' => $m['email'], 'role' => $m['role'], 'status' => $m['status'], 'joined_at' => $m['joined_at'], 'created_at' => $m['created_at'],
+            'outlet_ids' => $this->repo->memberOutlets((string) $m['id'])];
     }
 }

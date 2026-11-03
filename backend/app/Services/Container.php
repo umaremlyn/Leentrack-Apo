@@ -8,6 +8,7 @@ use LeenTrack\Core\RateLimiter;
 use LeenTrack\Mail\FileMailer;
 use LeenTrack\Mail\Mailer;
 use LeenTrack\Mail\NativeMailer;
+use LeenTrack\Mail\SmtpMailer;
 use LeenTrack\Repositories\CatalogRepository;
 use LeenTrack\Repositories\CustomerRepository;
 use LeenTrack\Repositories\ExpenseRepository;
@@ -45,9 +46,14 @@ final class Container
 
     public function mailer(): Mailer
     {
-        return $this->mailer ??= ($this->app->config['mail_driver'] ?? ($this->app->isProduction() ? 'native' : 'file')) === 'native'
-            ? new NativeMailer($this->app->config['mail_from'], $this->app->logger())
-            : new FileMailer($this->app->config['log_dir'] . '/mail.log');
+        if ($this->mailer !== null) { return $this->mailer; }
+        $cfg = $this->app->config;
+        $driver = (string) (($cfg['mail_driver'] ?? '') ?: ($this->app->isProduction() ? 'native' : 'file'));
+        return $this->mailer = match ($driver) {
+            'smtp' => new SmtpMailer((string) $cfg['smtp']['host'], (int) $cfg['smtp']['port'], (string) $cfg['smtp']['secure'], (string) $cfg['smtp']['user'], (string) $cfg['smtp']['pass'], (string) $cfg['mail_from'], $this->app->logger()),
+            'native' => new NativeMailer($cfg['mail_from'], $this->app->logger()),
+            default => new FileMailer($cfg['log_dir'] . '/mail.log'),
+        };
     }
 
     public function sessions(): SessionService
@@ -93,7 +99,7 @@ final class Container
     public function credit(): CreditService { return $this->once('credit', fn () => new CreditService($this->app->pdo(), $this->saleRepo(), $this->customerRepo(), $this->loyalty(), $this->audit())); }
 
     public function expenseRepo(): ExpenseRepository { return $this->once('expRepo', fn () => new ExpenseRepository($this->app->pdo())); }
-    public function reportRepo(): ReportRepository { return $this->once('repRepo', fn () => new ReportRepository($this->app->pdo())); }
+    public function reportRepo(): ReportRepository { return $this->once('repRepo', fn () => new ReportRepository($this->app->pdo(), (int) ($this->app->config['report_max_rows'] ?? ReportRepository::MAX_REPORT_ROWS))); }
     public function expenses(): ExpenseService { return $this->once('expenses', fn () => new ExpenseService($this->expenseRepo(), $this->catalog(), $this->audit())); }
     public function profit(): ProfitService { return $this->once('profit', fn () => new ProfitService($this->reportRepo(), $this->saleRepo())); }
     public function dashboard(): DashboardService { return $this->once('dash', fn () => new DashboardService($this->reportRepo(), $this->catalog(), $this->saleRepo(), $this->profit(), $this->credit(), $this->purchaseRepo())); }
@@ -103,8 +109,9 @@ final class Container
 
     public function transfers(): TransferService { return $this->once('transfers', fn () => new TransferService($this->app->pdo(), new TransferRepository($this->app->pdo()), $this->catalog(), $this->stock(), $this->audit())); }
 
+    public function account(): AccountService { return $this->once('account', fn () => new AccountService($this->app->pdo(), $this->users(), $this->sessions(), $this->hasher(), $this->mailer(), $this->audit(), $this->limiter(), (bool) $this->app->config['rate_limit_enabled'], (string) ($this->app->config['avatar_dir'] ?? ''))); }
     public function reports(): ReportService { return $this->once('reports', fn () => new ReportService($this->reportRepo(), $this->saleRepo(), $this->catalog(), $this->profit(), $this->expenses(), $this->credit())); }
 
     public function locations(): LocationService { return $this->once('loc', fn () => new LocationService($this->tenants(), $this->audit())); }
-    public function me(): MeService { return $this->once('me', fn () => new MeService($this->users(), $this->tenants(), $this->sessionsRepo(), $this->auth(), $this->audit())); }
+    public function me(): MeService { return $this->once('me', fn () => new MeService($this->users(), $this->tenants(), $this->sessionsRepo(), $this->auth(), $this->audit(), (string) ($this->app->config['avatar_dir'] ?? ''))); }
 }

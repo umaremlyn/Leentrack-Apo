@@ -36,6 +36,12 @@ final class Response
         return new self($status, $body === false ? '{"ok":false}' : $body, ['Content-Type' => 'application/json; charset=utf-8']);
     }
 
+    public static function binary(string $body, string $mime, ?string $downloadAs = null): self
+    {
+        $disp = $downloadAs === null ? 'inline' : 'attachment; filename="' . preg_replace('/[^A-Za-z0-9._-]/', '_', $downloadAs) . '"';
+        return new self(200, $body, ['Content-Type' => $mime, 'X-Content-Type-Options' => 'nosniff', 'Cache-Control' => 'private, max-age=300', 'Content-Disposition' => $disp]);
+    }
+
     public static function csv(string $body, string $filename): self
     {
         $safe = preg_replace('/[^A-Za-z0-9._-]/', '_', $filename);

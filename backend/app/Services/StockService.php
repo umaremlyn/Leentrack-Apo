@@ -21,7 +21,7 @@ use PDO;
 final class StockService
 {
     /** reason => required sign (+1 adds stock, -1 removes, 0 either) */
-    public const ADJUST_REASONS = ['correction' => 0, 'count' => 0, 'found' => 1, 'return' => 1, 'damaged' => -1, 'write_off' => -1, 'expired' => -1, 'theft' => -1];
+    public const ADJUST_REASONS = ['correction' => 0, 'count' => 0, 'found' => 1, 'return' => 1, 'damaged' => -1, 'write_off' => -1, 'supplier_return' => -1, 'expired' => -1, 'theft' => -1];
     private const MAX_QTY = 10_000_000;
 
     public function __construct(private readonly PDO $pdo, private readonly CatalogRepository $repo, private readonly AuditService $audit)
@@ -119,7 +119,7 @@ final class StockService
     {
         $t->require('reports.read');
         $loc = $this->optUuid($q, 'location_id');
-        if ($loc !== null && !$t->canAccessOutlet($loc)) { throw ApiException::notFound('Outlet not found.'); }
+        if ($loc !== null && (!$t->canAccessOutlet($loc) || !$this->repo->locationExists($t->businessId, $loc))) { throw ApiException::notFound('Outlet not found.'); }
         $v = $this->repo->valuation($t->businessId, $loc, $t->outletIds);
         return ['cost_value' => $v['cost'], 'retail_value' => $v['retail'], 'units' => $v['units'], 'products' => $v['products'], 'location_id' => $loc, 'as_of' => Clock::sql()];
     }

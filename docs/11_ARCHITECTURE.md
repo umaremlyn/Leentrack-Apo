@@ -144,3 +144,17 @@ MySQL-backed fixed window (`rate_limits`), usable on shared hosting. Applied per
   * D-63 Voided sales are listed in the sales report but excluded from every total; draft/cancelled purchase orders are excluded from commitments.
   * D-64 Outlets report: per-outlet figures plus business totals; expenses without an outlet are shown as `unallocated_expenses` (never silently dropped), visible only to unrestricted users.
   * D-65 Inventory report uses the dashboard rule: low = 0 < stock <= reorder level; totals cover active stocked items.
+
+## Phase 3i additions (account lifecycle) and gap fixes
+* **Schema:** `0011_account_lifecycle` (users: `must_change_password`, `deletion_requested_at`, `deletion_scheduled_at`, `anonymised_at`), `0012_supplier_payments`.
+* **Services:** `AccountService` (export, deletion request/cancel, purge job), `MeService` avatar methods, `StaffService::setOutlets`, `PurchaseService::pay/supplierStatement`, `Documents\PdfRenderer`, `Mail\SmtpMailer`.
+* **Decisions:**
+  * D-66 Account deletion = request (password + typed phrase) → sign-in disabled and sessions revoked → 14-day grace (cancel with e-mail + password) → `cron purge-accounts` deletes the person's own businesses and all their data, removes their memberships elsewhere, and **anonymises** the user row (kept, blank) because `sales.user_id` and audit actors reference it. The e-mail address becomes reusable.
+  * D-67 `AccountService::PURGE_ORDER` must list every table with a `business_id`; `AccountTest` fails if a new table is added without it (and without an export section).
+  * D-68 An owner whose business still has team members cannot delete their account (no ownership transfer yet — G-52).
+  * D-69 Legacy-password policy (G-21): sign-in is never blocked; weak migrated passwords raise `must_change_password`, cleared by a real password change (a silent re-hash of the same password does not clear it).
+  * D-70 Exports are paged by section (1,000 rows) and owner-only; personal export excludes every secret hash.
+  * D-71 Avatars: the image type is decided from the bytes (JPEG/PNG/WebP, 16–4096 px, ≤1 MB), stored outside the web root under a random name, served with `nosniff`.
+  * D-72 A filter naming a foreign or non-existent outlet is 404 everywhere (never an empty 200).
+  * D-73 Supplier payments are bounded by received-and-unpaid value per order, row-locked with the order, idempotent, immutable; they are not expenses.
+  * D-74 PDF documents are produced without any library (Courier, A4, paginated); SMTP without any library (sockets).

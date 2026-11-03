@@ -48,9 +48,48 @@ final class UserRepository
         $this->pdo->prepare('INSERT INTO user_profiles (user_id, full_name, currency, address) VALUES (?,?,?,?)')->execute([$userId, $fullName, $currency, $address]);
     }
 
-    public function setPassword(string $userId, string $hash): void
+    /** @param bool $changed true when the USER chose a new password (clears the must-change flag); false for a silent re-hash of the same password */
+    public function setPassword(string $userId, string $hash, bool $changed = true): void
     {
-        $this->pdo->prepare('UPDATE users SET password_hash = ?, legacy_bcrypt_hash = NULL WHERE id = ?')->execute([$hash, $userId]);
+        $this->pdo->prepare('UPDATE users SET password_hash = ?, legacy_bcrypt_hash = NULL' . ($changed ? ', must_change_password = 0' : '') . ' WHERE id = ?')->execute([$hash, $userId]);
+    }
+
+    public function setMustChangePassword(string $userId, bool $flag): void
+    {
+        $this->pdo->prepare('UPDATE users SET must_change_password = ? WHERE id = ?')->execute([(int) $flag, $userId]);
+    }
+
+    public function requestDeletion(string $userId, string $nowSql, string $dueSql): void
+    {
+        $this->pdo->prepare("UPDATE users SET status = 'pending_deletion', deletion_requested_at = ?, deletion_scheduled_at = ? WHERE id = ? AND status = 'active'")->execute([$nowSql, $dueSql, $userId]);
+    }
+
+    public function cancelDeletion(string $userId): void
+    {
+        $this->pdo->prepare("UPDATE users SET status = 'active', deletion_requested_at = NULL, deletion_scheduled_at = NULL WHERE id = ? AND status = 'pending_deletion' AND anonymised_at IS NULL")->execute([$userId]);
+    }
+
+    /** @return list<string> ids whose grace period has ended */
+    public function dueDeletions(string $nowSql, int $limit = 50): array
+    {
+        $st = $this->pdo->prepare("SELECT id FROM users WHERE status = 'pending_deletion' AND anonymised_at IS NULL AND deletion_scheduled_at <= ? ORDER BY deletion_scheduled_at, id LIMIT $limit");
+        $st->execute([$nowSql]);
+        return array_map('strval', $st->fetchAll(PDO::FETCH_COLUMN));
+    }
+
+    /** Blank every personal field; the row stays because sales.user_id (and audit actors) point at it. */
+    public function anonymise(string $userId, string $nowSql): void
+    {
+        $this->pdo->prepare("UPDATE users SET email = ?, password_hash = NULL, legacy_bcrypt_hash = NULL, phone = NULL, phone_verified_at = NULL, status = 'disabled', must_change_password = 0, deletion_scheduled_at = NULL, anonymised_at = ?, deleted_at = ? WHERE id = ?")
+            ->execute(['deleted-' . $userId . '@deleted.invalid', $nowSql, $nowSql, $userId]);
+        $this->pdo->prepare('UPDATE user_profiles SET full_name = NULL, address = NULL, avatar_path = NULL, notification_prefs = NULL WHERE user_id = ?')->execute([$userId]);
+        $this->pdo->prepare('DELETE FROM user_tokens WHERE user_id = ?')->execute([$userId]);
+        $this->pdo->prepare('DELETE FROM auth_sessions WHERE user_id = ?')->execute([$userId]);
+    }
+
+    public function setAvatar(string $userId, ?string $path): void
+    {
+        $this->pdo->prepare('UPDATE user_profiles SET avatar_path = ? WHERE user_id = ?')->execute([$path, $userId]);
     }
 
     public function markLogin(string $userId): void

@@ -696,8 +696,13 @@ final class SalesTest extends ApiTestCase
         $this->assertSame(['invoice', 'PART PAID', '4987.50', 'On credit', '2000.00'], [$d['kind'], $d['status']['label'], $d['balanceDue'], $d['paymentMethod'], $d['amountPaid']]);
         $this->assertStringContainsString('How to pay:', $d['share_message']);
         $this->assertStringStartsWith('Invoice-INV-', $d['file_name']);
-        $this->assertSame(501, $this->call('GET', '/sales/' . $paid['data']['id'] . '/document?format=pdf', null, $o['token'], $o['business_id'])[0]);
-        $this->assertSame(422, $this->call('GET', '/sales/' . $paid['data']['id'] . '/document?format=zip', null, $o['token'], $o['business_id'])[0], 'unknown formats are a validation error, pdf is a known-but-unbuilt one');
+        [$ps, , $pdf] = $this->call('GET', '/sales/' . $credit['data']['id'] . '/document?format=pdf', null, $o['token'], $o['business_id']);
+        $this->assertSame([200, 'application/pdf', 'nosniff'], [$ps, $pdf->headers['Content-Type'], $pdf->headers['X-Content-Type-Options']]);
+        $this->assertStringStartsWith('%PDF-1.4', $pdf->body);
+        $this->assertStringContainsString('attachment; filename="Invoice-INV-', $pdf->headers['Content-Disposition']);
+        $this->assertStringContainsString('4,987.50', $pdf->body, 'the balance due is printed on the invoice');
+        $this->assertSame(404, $this->call('GET', '/sales/' . Uuid::v4() . '/document?format=pdf', null, $o['token'], $o['business_id'])[0]);
+        $this->assertSame(422, $this->call('GET', '/sales/' . $paid['data']['id'] . '/document?format=zip', null, $o['token'], $o['business_id'])[0], 'unknown formats are a validation error');
     }
 
     public function testBrandingPermissionsAndLogoValidation(): void

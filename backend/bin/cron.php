@@ -13,8 +13,14 @@ try {
             $app->logger()->info('cron housekeeping', $r);
             echo json_encode($r), "\n";
             break;
+        case 'purge-accounts':
+            $r = (new LeenTrack\Services\Container($app))->account()->purgeDue();
+            $app->logger()->info('cron purge-accounts', $r);
+            echo json_encode($r), "\n";
+            if ($r['failed'] > 0) { exit(1); }
+            break;
         default:
-            fwrite(STDERR, "Usage: cron.php housekeeping\n");
+            fwrite(STDERR, "Usage: cron.php housekeeping|purge-accounts\n");
             exit(2);
     }
 } catch (Throwable $e) {

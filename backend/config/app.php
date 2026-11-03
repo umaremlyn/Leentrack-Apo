@@ -10,12 +10,19 @@ return [
     'version' => '0.1.0',
     'api_prefix' => '/api/v1',
     'log_dir' => dirname(__DIR__) . '/storage/logs',
+    'avatar_dir' => Env::get('AVATAR_DIR', dirname(__DIR__) . '/storage/avatars'),
     'log_level' => Env::get('LOG_LEVEL', 'info'),
     'cors_origins' => array_values(array_filter(array_map('trim', explode(',', (string) Env::get('CORS_ALLOWED_ORIGINS', ''))))),
     'trusted_proxies' => array_values(array_filter(array_map('trim', explode(',', (string) Env::get('TRUSTED_PROXIES', ''))))),
     'rate_limit_enabled' => Env::bool('RATE_LIMIT_ENABLED', true),
     'enforce_sales_limit' => Env::bool('ENFORCE_SALES_LIMIT', false),   // the source only showed a banner; blocking the till is an owner decision (G-29)
     'web_url' => rtrim((string) Env::get('WEB_URL', ''), '/'),
+    'report_max_rows' => Env::int('REPORT_MAX_ROWS', 50000),             // largest report (rows) built in one request; protects shared-hosting memory
+    'mail_driver' => Env::get('MAIL_DRIVER', ''),                       // smtp | native | file ('' = native in production, file otherwise)
+    'smtp' => [
+        'host' => Env::get('SMTP_HOST', ''), 'port' => Env::int('SMTP_PORT', 587), 'secure' => Env::get('SMTP_SECURE', 'tls'),   // tls = STARTTLS, ssl = implicit TLS, none
+        'user' => Env::get('SMTP_USER', ''), 'pass' => Env::get('SMTP_PASS', ''),
+    ],
     'mail_from' => Env::get('MAIL_FROM', 'LeenTrack <no-reply@localhost>'),
     'auth' => [
         'access_ttl' => Env::int('ACCESS_TOKEN_TTL', 900),            // 15 min

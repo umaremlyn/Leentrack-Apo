@@ -38,6 +38,7 @@ Create a subdomain **api.yourdomain.com** in cPanel → *Domains* and set its **
 ## 4. Cron (jobs are added as they are built; none are required for Phase 2 except housekeeping)
 ```
 */30 * * * *  /opt/cpanel/ea-php84/root/usr/bin/php /home/CPUSER/leentrack/backend/bin/cron.php housekeeping   # purge rate limits / expired tokens  (arrives in Phase 3)
+15 2 * * *    /opt/cpanel/ea-php84/root/usr/bin/php /home/CPUSER/leentrack/backend/bin/cron.php purge-accounts   # permanently deletes accounts whose 14-day grace has ended (Phase 3i) — without it, deleted accounts stay pending
 0 1 * * *     /opt/cpanel/ea-php84/root/usr/bin/php .../bin/cron.php expire-plans                             # Phase 3j
 ```
 Cron jobs run the CLI, never an HTTP URL.
@@ -53,3 +54,10 @@ Upload new code to a fresh directory, `composer install --no-dev`, run `php bin/
 
 ## 8. Known unknowns (to be resolved on the first real deployment)
 `mail()` deliverability on Truehost; whether outbound HTTPS to Paystack is allowed; `max_execution_time` for the importer (it is chunked and resumable by design); whether cron can be set to 1-minute granularity.
+
+
+## Phase 3i settings
+* **E-mail:** set `MAIL_DRIVER=smtp` with `SMTP_HOST`, `SMTP_PORT` (587 + `SMTP_SECURE=tls`, or 465 + `ssl`), `SMTP_USER`, `SMTP_PASS`, and a `MAIL_FROM` on a domain that has SPF and DKIM. Use a cPanel mailbox on your own domain. `native` (PHP `mail()`) remains available but is less reliable.
+* **Profile pictures:** `AVATAR_DIR` (default `backend/storage/avatars`) must be writable by PHP and **outside the web root**.
+* **Reports:** `REPORT_MAX_ROWS` (default 50000) bounds memory for the largest report; lower it on small plans.
+* **Not yet verified on a real host:** the STARTTLS/TLS handshake of the SMTP client, and that the cPanel PHP has `iconv`/`mbstring` (the PDF writer uses `mbstring`).

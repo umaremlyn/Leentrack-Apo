@@ -30,6 +30,12 @@ final class PurchaseController
     public function orderPlace(Request $r): Response { return Response::ok($this->svc->place($r->tenant(), $this->id($r), $r)); }
     public function orderCancel(Request $r): Response { return Response::ok($this->svc->cancel($r->tenant(), $this->id($r), $r)); }
     public function orderClose(Request $r): Response { return Response::ok($this->svc->close($r->tenant(), $this->id($r), $r)); }
+    public function supplierStatement(Request $r): Response { return Response::ok($this->svc->supplierStatement($r->tenant(), $this->id($r))); }
+    public function orderPay(Request $r): Response
+    {
+        $x = $this->svc->pay($r->tenant(), $this->id($r), $r->json(), $r->header('idempotency-key'), $r);
+        return Response::ok($x['result'], ['replayed' => $x['replayed']], $x['replayed'] ? 200 : 201);
+    }
     public function orderReceive(Request $r): Response
     {
         $x = $this->svc->receive($r->tenant(), $this->id($r), $r->json(), $r->header('idempotency-key'), $r);

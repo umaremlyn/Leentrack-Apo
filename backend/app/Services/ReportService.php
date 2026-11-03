@@ -24,8 +24,8 @@ use LeenTrack\Services\Profit\PeriodRange;
  */
 final class ReportService
 {
-    public const REPORTS = ['sales', 'profit', 'inventory', 'expenses', 'credit', 'purchases', 'outlets', 'products'];
-    private const EXTRA_PERMISSION = ['profit' => 'profit.read', 'outlets' => 'profit.read', 'expenses' => 'expenses.manage', 'credit' => 'credit.read'];
+    public const REPORTS = ['sales', 'profit', 'inventory', 'expenses', 'credit', 'purchases', 'outlets', 'products', 'customers'];
+    private const EXTRA_PERMISSION = ['profit' => 'profit.read', 'outlets' => 'profit.read', 'expenses' => 'expenses.manage', 'credit' => 'credit.read', 'customers' => 'customers.read'];
 
     public function __construct(
         private readonly ReportRepository $reports,
@@ -41,7 +41,7 @@ final class ReportService
     public function index(TenantContext $t): array
     {
         $t->require('reports.read');
-        return array_map(fn ($n) => ['key' => $n, 'allowed' => $t->can(self::EXTRA_PERMISSION[$n] ?? 'reports.read'), 'timed' => !in_array($n, ['inventory', 'credit'], true)], self::REPORTS);
+        return array_map(fn ($n) => ['key' => $n, 'allowed' => $t->can(self::EXTRA_PERMISSION[$n] ?? 'reports.read'), 'timed' => !in_array($n, ['inventory', 'credit', 'customers'], true)], self::REPORTS);
     }
 
     /** @param array<string,mixed> $q */
@@ -50,9 +50,9 @@ final class ReportService
         $t->require('reports.read');
         if (!in_array($name, self::REPORTS, true)) { throw ApiException::notFound(); }
         $t->require(self::EXTRA_PERMISSION[$name] ?? 'reports.read');
-        $timed = !in_array($name, ['inventory', 'credit'], true);
+        $timed = !in_array($name, ['inventory', 'credit', 'customers'], true);
         $own = match ($name) { 'inventory' => ['stock_status'], 'expenses' => ['category_id', 'payment_method', 'search'], 'credit' => ['search', 'overdue'], default => [] };
-        $allowed = array_merge(['format', 'page', 'per_page'], $timed ? ['period', 'from', 'to'] : [], $name === 'credit' ? [] : ['outlet_id'], $own);
+        $allowed = array_merge(['format', 'page', 'per_page'], $timed ? ['period', 'from', 'to'] : [], in_array($name, ['credit', 'customers'], true) ? [] : ['outlet_id'], $own);
         if ($extra = array_diff(array_keys($q), $allowed)) { throw ApiException::validation([(string) reset($extra) => ['Unknown filter.']]); }
         $format = $q['format'] ?? 'json';
         if (!is_string($format) || !in_array($format, ['json', 'csv'], true)) { throw ApiException::validation(['format' => ['Must be json or csv.']]); }
@@ -74,6 +74,7 @@ final class ReportService
                 'purchases' => $this->purchasesReport($t, $range, $tz, $outlet),
                 'outlets' => $this->outletsReport($t, $range),
                 'products' => $this->productsReport($t, $range, $outlet),
+                'customers' => $this->customersReport($t),
             };
         } catch (\OverflowException) {
             throw new ApiException('range_too_large', 'The amounts in that report are too large to add up. Choose a shorter period.', 413);
@@ -195,17 +196,17 @@ final class ReportService
     {
         $rows = $this->reports->purchasesReport($t->businessId, Clock::sql($range['from']), Clock::sql($range['to']), $outlet, $t->outletIds);
         $this->cap($rows);
-        $by = []; $ordered = $received = Money::zero(); $out = [];
+        $by = []; $ordered = $received = $paidSum = Money::zero(); $out = [];
         foreach ($rows as $o) {
             $by[$o['status']] ??= ['count' => 0, 'total' => Money::zero(), 'received' => Money::zero()];
             $by[$o['status']]['count']++; $by[$o['status']]['total'] = $by[$o['status']]['total']->add(Money::parse($o['total_cost'])); $by[$o['status']]['received'] = $by[$o['status']]['received']->add(Money::parse((string) $o['received_value']));
-            if (!in_array($o['status'], ['draft', 'cancelled'], true)) { $ordered = $ordered->add(Money::parse($o['total_cost'])); $received = $received->add(Money::parse((string) $o['received_value'])); }
+            if (!in_array($o['status'], ['draft', 'cancelled'], true)) { $ordered = $ordered->add(Money::parse($o['total_cost'])); $received = $received->add(Money::parse((string) $o['received_value'])); $paidSum = $paidSum->add(Money::parse((string) $o['paid_value'])); }
             $out[] = ['order_number' => $o['order_number'], 'date' => $this->local($o['created_at'], $tz), 'supplier' => $o['supplier_name'], 'outlet' => $o['outlet_name'], 'status' => $o['status'],
-                'ordered_value' => $o['total_cost'], 'received_value' => Money::parse((string) $o['received_value'])->toString(), 'units_ordered' => (int) $o['units_ordered'], 'units_received' => (int) $o['units_received']];
+                'ordered_value' => $o['total_cost'], 'received_value' => Money::parse((string) $o['received_value'])->toString(), 'paid' => Money::parse((string) $o['paid_value'])->toString(), 'balance_due' => Money::parse((string) $o['received_value'])->sub(Money::parse((string) $o['paid_value']))->toString(), 'units_ordered' => (int) $o['units_ordered'], 'units_received' => (int) $o['units_received']];
         }
         ksort($by);
-        return ['columns' => [['order_number'], ['date'], ['supplier', true], ['outlet', true], ['status'], ['ordered_value'], ['received_value'], ['units_ordered'], ['units_received']], 'rows' => $out,
-            'summary' => ['orders' => count($out), 'ordered_value' => $ordered->toString(), 'received_value' => $received->toString(), 'outstanding_value' => $ordered->sub($received)->toString(),
+        return ['columns' => [['order_number'], ['date'], ['supplier', true], ['outlet', true], ['status'], ['ordered_value'], ['received_value'], ['paid'], ['balance_due'], ['units_ordered'], ['units_received']], 'rows' => $out,
+            'summary' => ['orders' => count($out), 'ordered_value' => $ordered->toString(), 'received_value' => $received->toString(), 'outstanding_value' => $ordered->sub($received)->toString(), 'paid_to_suppliers' => $paidSum->toString(), 'payable_to_suppliers' => $received->sub($paidSum)->toString(),
                 'by_status' => array_map(fn ($s, $v) => ['status' => $s, 'count' => $v['count'], 'ordered_value' => $v['total']->toString(), 'received_value' => $v['received']->toString()], array_keys($by), $by),
                 'note' => 'Totals exclude drafts and cancelled orders. Outstanding includes orders that were closed short.']];
     }
@@ -244,11 +245,26 @@ final class ReportService
             'summary' => ['products' => count($rows), 'units' => array_sum(array_column($rows, 'quantity')), 'revenue' => $total->toString(), 'note' => 'Line totals of non-voided sales, grouped by product (two products with one name stay separate).']];
     }
 
+    /** The source's customers CSV: who they are, what they have spent, loyalty points. Business-wide (customers belong to the business, not an outlet). */
+    private function customersReport(TenantContext $t): array
+    {
+        $rows = $this->reports->customersReport($t->businessId);
+        $this->cap($rows);
+        $spent = Money::zero(); $points = 0;
+        $out = array_map(function ($c) use (&$spent, &$points) {
+            $spent = $spent->add(Money::parse((string) $c['total_spent'])); $points += (int) $c['loyalty_points'];
+            return ['name' => $c['name'], 'email' => $c['email'], 'phone' => $c['phone'], 'group' => $c['group_name'], 'total_spent' => $c['total_spent'], 'visits' => (int) $c['visit_count'],
+                'last_visit' => $c['last_visit'] === null ? null : (new \DateTimeImmutable($c['last_visit'], new \DateTimeZone('UTC')))->format('Y-m-d\TH:i:s\Z'), 'loyalty_points' => (int) $c['loyalty_points'], 'joined' => substr((string) $c['created_at'], 0, 10)];
+        }, $rows);
+        return ['columns' => [['name', true], ['email', true], ['phone', true], ['group', true], ['total_spent'], ['visits'], ['last_visit'], ['loyalty_points'], ['joined']], 'rows' => $out,
+            'summary' => ['customers' => count($out), 'total_spent' => $spent->toString(), 'loyalty_points' => $points, 'note' => 'Total spent is money actually received (checkout payments and credit repayments).']];
+    }
+
     // ================================================================================================ helpers
     /** @param array<array-key,mixed> $rows */
     private function cap(array $rows): void
     {
-        if (count($rows) > ReportRepository::MAX_REPORT_ROWS) { throw new ApiException('range_too_large', 'That report has too many rows. Choose a shorter period.', 413); }
+        if (count($rows) > $this->reports->maxRows()) { throw new ApiException('range_too_large', 'That report has too many rows. Choose a shorter period.', 413); }
     }
 
     private function local(string $utc, \DateTimeZone $tz): string
@@ -261,7 +277,7 @@ final class ReportService
     {
         if (!isset($q['outlet_id'])) { return null; }
         if (!is_string($q['outlet_id']) || !Uuid::isValid($q['outlet_id'])) { throw ApiException::validation(['outlet_id' => ['Must be a valid id.']]); }
-        if (!$t->canAccessOutlet($q['outlet_id'])) { throw ApiException::notFound('Outlet not found.'); }
+        if (!$t->canAccessOutlet($q['outlet_id']) || !$this->reports->locationExists($t->businessId, $q['outlet_id'])) { throw ApiException::notFound('Outlet not found.'); }
         return $q['outlet_id'];
     }
 }

@@ -31,7 +31,9 @@ final class PurchaseRepository
         $total = (int) $st->fetchColumn();
         $st = $this->pdo->prepare('SELECT ' . self::SUP . ",
             (SELECT COUNT(*) FROM purchase_orders o WHERE o.supplier_id = s.id) AS order_count,
-            (SELECT COUNT(*) FROM purchase_orders o WHERE o.supplier_id = s.id AND o.status IN ('ordered','partially_received')) AS open_orders
+            (SELECT COUNT(*) FROM purchase_orders o WHERE o.supplier_id = s.id AND o.status IN ('ordered','partially_received')) AS open_orders,
+            COALESCE((SELECT SUM(i.quantity_received * i.unit_cost) FROM purchase_order_items i JOIN purchase_orders o ON o.id = i.purchase_order_id WHERE o.supplier_id = s.id),0)
+              - COALESCE((SELECT SUM(p.amount) FROM supplier_payments p WHERE p.supplier_id = s.id),0) AS balance_owed
             FROM suppliers s WHERE $w ORDER BY s.name, s.id LIMIT $limit OFFSET $offset");
         $st->execute($a);
         return ['rows' => $st->fetchAll(), 'total' => $total];
@@ -42,7 +44,9 @@ final class PurchaseRepository
     {
         $st = $this->pdo->prepare('SELECT ' . self::SUP . ",
             (SELECT COUNT(*) FROM purchase_orders o WHERE o.supplier_id = s.id) AS order_count,
-            (SELECT COUNT(*) FROM purchase_orders o WHERE o.supplier_id = s.id AND o.status IN ('ordered','partially_received')) AS open_orders
+            (SELECT COUNT(*) FROM purchase_orders o WHERE o.supplier_id = s.id AND o.status IN ('ordered','partially_received')) AS open_orders,
+            COALESCE((SELECT SUM(i.quantity_received * i.unit_cost) FROM purchase_order_items i JOIN purchase_orders o ON o.id = i.purchase_order_id WHERE o.supplier_id = s.id),0)
+              - COALESCE((SELECT SUM(p.amount) FROM supplier_payments p WHERE p.supplier_id = s.id),0) AS balance_owed
             FROM suppliers s WHERE s.business_id = ? AND s.id = ?" . ($withArchived ? '' : ' AND s.archived_at IS NULL'));
         $st->execute([$bid, $id]);
         return $st->fetch() ?: null;
@@ -233,5 +237,58 @@ final class PurchaseRepository
         $st = $this->pdo->prepare("SELECT COUNT(*) FROM purchase_orders WHERE $w");
         $st->execute($a);
         return (int) $st->fetchColumn();
+    }
+
+    // ================================================================================== supplier payments
+    /** Value of goods received on one order. */
+    public function receivedValue(string $bid, string $orderId): string
+    {
+        $st = $this->pdo->prepare('SELECT COALESCE(SUM(quantity_received * unit_cost),0) FROM purchase_order_items WHERE business_id = ? AND purchase_order_id = ?');
+        $st->execute([$bid, $orderId]);
+        return (string) $st->fetchColumn();
+    }
+
+    public function paidTotal(string $bid, string $orderId): string
+    {
+        $st = $this->pdo->prepare('SELECT COALESCE(SUM(amount),0) FROM supplier_payments WHERE business_id = ? AND purchase_order_id = ?');
+        $st->execute([$bid, $orderId]);
+        return (string) $st->fetchColumn();
+    }
+
+    /** @return array<string,mixed>|null */
+    public function paymentByOperation(string $bid, string $op): ?array
+    {
+        $st = $this->pdo->prepare('SELECT id,purchase_order_id,request_hash FROM supplier_payments WHERE business_id = ? AND client_operation_id = ?');
+        $st->execute([$bid, $op]);
+        return $st->fetch() ?: null;
+    }
+
+    /** @param array<string,mixed> $p */
+    public function insertPayment(array $p): void
+    {
+        $this->pdo->prepare('INSERT INTO supplier_payments (id,business_id,supplier_id,purchase_order_id,amount,payment_method,reference,notes,client_operation_id,request_hash,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+            ->execute([$p['id'], $p['business_id'], $p['supplier_id'], $p['purchase_order_id'], $p['amount'], $p['payment_method'], $p['reference'], $p['notes'], $p['client_operation_id'], $p['request_hash'], $p['created_by']]);
+    }
+
+    /** @return list<array<string,mixed>> oldest first */
+    public function payments(string $bid, ?string $orderId, ?string $supplierId): array
+    {
+        $w = 'p.business_id = ?'; $a = [$bid];
+        if ($orderId !== null) { $w .= ' AND p.purchase_order_id = ?'; $a[] = $orderId; }
+        if ($supplierId !== null) { $w .= ' AND p.supplier_id = ?'; $a[] = $supplierId; }
+        $st = $this->pdo->prepare("SELECT p.id,p.purchase_order_id,o.order_number,p.amount,p.payment_method,p.reference,p.notes,p.created_by,p.created_at FROM supplier_payments p JOIN purchase_orders o ON o.id = p.purchase_order_id WHERE $w ORDER BY p.created_at, p.id");
+        $st->execute($a);
+        return $st->fetchAll();
+    }
+
+    /** Orders that have received something, with what was received and paid. @return list<array<string,mixed>> */
+    public function supplierLedger(string $bid, string $supplierId): array
+    {
+        $st = $this->pdo->prepare("SELECT o.id,o.order_number,o.status,o.created_at,
+              COALESCE((SELECT SUM(i.quantity_received * i.unit_cost) FROM purchase_order_items i WHERE i.purchase_order_id = o.id),0) AS received_value,
+              COALESCE((SELECT SUM(p.amount) FROM supplier_payments p WHERE p.purchase_order_id = o.id),0) AS paid
+            FROM purchase_orders o WHERE o.business_id = ? AND o.supplier_id = ? AND o.status NOT IN ('draft','cancelled') ORDER BY o.created_at, o.id");
+        $st->execute([$bid, $supplierId]);
+        return $st->fetchAll();
     }
 }

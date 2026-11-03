@@ -79,6 +79,14 @@ final class TenantRepository
         return array_map('strval', $st->fetchAll(PDO::FETCH_COLUMN));
     }
 
+    /** @param list<string> $locationIds replaces the member's outlet restriction (empty = unrestricted) */
+    public function setMemberOutlets(string $memberId, array $locationIds): void
+    {
+        $this->pdo->prepare('DELETE FROM member_outlets WHERE member_id = ?')->execute([$memberId]);
+        $st = $this->pdo->prepare('INSERT INTO member_outlets (member_id, location_id) VALUES (?,?)');
+        foreach ($locationIds as $id) { $st->execute([$memberId, $id]); }
+    }
+
     /** @return list<array<string,mixed>> */
     public function members(string $businessId): array
     {

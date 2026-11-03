@@ -241,7 +241,7 @@ final class FinanceTest extends ApiTestCase
         [, $j] = $this->call('GET', '/profit?from=2026-03-01&to=2026-03-31', null, $other['token'], $other['business_id']);
         $this->assertSame(['0.00', 0], [$j['data']['summary']['sold'], $j['data']['summary']['sales_counted']], "B sees none of A's sales");
         [$fs, $fj] = $this->call('GET', '/profit?from=2026-03-01&to=2026-03-31&outlet_id=' . (string) $this->pdo->query("SELECT id FROM locations WHERE business_id='{$o['business_id']}' LIMIT 1")->fetchColumn(), null, $other['token'], $other['business_id']);
-        $this->assertSame([200, '0.00'], [$fs, $fj['data']['summary']['sold']], "another business's outlet id exposes nothing");
+        $this->assertSame(404, $fs, "another business's outlet id is 'not found', not an empty answer");
     }
 
     // ================================================================================================ dashboard

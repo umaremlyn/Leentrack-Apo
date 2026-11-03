@@ -2,7 +2,80 @@
 
 Each item: what is missing, why it matters, what I did/will do meanwhile, and who must act. IDs are referenced from other docs.
 
+## 0. Resolution log (updated in Phase 3i, 2026-11-03)
+
+Rule applied to every gap: if the production product does something and the rebuild differed, or the rebuild had a limitation that is fixable in code, it was fixed; if it needs a fact only the owner has, it stays open and says exactly what is needed; if it is a business decision, the implemented default is stated so it can be changed.
+
+**Legend:** ✅ fixed in code (tested) · 🟡 implemented default — your decision, easy to change · ⏳ deferred to a named phase · ❓ needs information or a decision from the owner · ➖ intentional difference from production (a fix; see section C)
+
+| ID | Status | What was done / what is still needed |
+|---|---|---|
+| G-01 | ❓ | Needs `pg_dump --schema-only` of production. Nothing in code can replace it. |
+| G-02 | ❓ | Needs the data + `auth.users` export (rehearsal only, never production writes). |
+| G-03 | ❓ | Needs the list of applied migrations (016–019). |
+| G-04 | ❓ | Needs Supabase Auth settings (password policy, e-mail templates). Defaults documented. |
+| G-05 | ➖ | Per-outlet stock is implemented (production had one global number). |
+| G-06 | 🟡 | One payment method per sale (as production). Split payments only if you want them. |
+| G-07 | 🟡 | Managers and owners can void; stock and customer totals are reversed. |
+| G-08 | 🟡 | Cashiers see Sales and Customers only (as production). |
+| G-09 | ❓ | Flutterwave does not exist in production. Build only if you confirm it is wanted and give sandbox keys. |
+| G-10 | ❓ | SMS verification needs a gateway choice (Termii/Twilio…). |
+| G-11 | 🟡 | Over-limit businesses keep what they have; new items are blocked. |
+| G-12 | 🟡 | `total_spent` = money actually received. |
+| G-13 | ✅/❓ | Retention is now implemented: 14-day grace, then the purge job deletes the owner's business data and anonymises the person (Phase 3i). The legal period for payment records (7 years default) still needs counsel and applies when billing exists (3j). |
+| G-14 | 🟡 | Web migration lives on a branch of `Track`, never auto-deployed. |
+| G-15 | ✅/❓ | Profile pictures: upload/read/remove API built (type decided from the bytes, 1 MB, stored outside the web root). Importing existing Supabase avatars needs the storage export. |
+| G-16 | ❓ | Needs `phpinfo()` / cPanel facts. Code uses only common extensions (PDO, mbstring); the PDF writer needs no GD. |
+| G-17 | ❓ | Apple / Google / signing accounts. |
+| G-18 | ❓ | Sender domain + SPF/DKIM. Code is ready (see G-22). |
+| G-19 | 🟡 | One currency per business (as production). |
+| G-20 | 🟡 | One tax rate per business (as production). |
+| G-21 | ✅ | Soft enforcement built: a migrated user whose password fails today's policy is signed in (never locked out) and `must_change_password=true` is returned by login and `/me`; changing the password clears it. Forcing the change is a one-line client decision. |
+| G-22 | ✅/❓ | `SmtpMailer` built (AUTH PLAIN/LOGIN, STARTTLS or implicit TLS, injection-safe, failures logged without secrets). Tested against a local fake SMTP server. **Not tested:** the TLS handshake against a real server. Needs SMTP credentials and SPF/DKIM from you. |
+| G-23 | ⏳ | Client forms must call `/stock/adjustments` — done in the web migration (Phase 7). |
+| G-24 | ➖ | Imports now enforce plan limits and unique barcodes (production did not). |
+| G-25 | 🟡 | Owner + manager edit groups; cashiers read only. Production was contradictory. |
+| G-26 | ➖ | Exact-cent arithmetic instead of floats (2,268 + 700 golden cases match the original). |
+| G-27 | 🟡 | Duplicate customers are allowed, exactly as in production. Say if you want a warning or a merge tool. |
+| G-28 | ✅ | `total_spent`, `visit_count`, `last_visit` are maintained since Phase 3c. |
+| G-29 | 🟡 | Server-side sales-limit blocking is OFF (production only showed a banner). `ENFORCE_SALES_LIMIT=true` turns it on. |
+| G-30 | ➖ | Selling takes stock from the selling outlet (required for correct outlet stock). Transfers (3g) move stock between outlets. |
+| G-31 | ✅ | `GET /sales/{id}/document?format=pdf` now returns a real PDF (dependency-free writer, Courier typeface; verified with `pdftotext` and `pypdf`). Limits: Latin-1 text, currency code instead of symbol, no logo (JSON still carries it). The source's pixel-perfect canvas design is not reproduced. |
+| G-32 | 🟡 | `refund_due` is returned and audited; no till/cash drawer ledger (production had none). Decide if you want one. |
+| G-33 | 🟡 | Discount breakdown after an edit is informational; totals are exact. |
+| G-34 | ⏳ | Importer rule recorded for Phase 8. |
+| G-35 | ⏳ | Repayment immutability is application-level; the nightly reconciliation job (3l) will detect drift. DB triggers are not used because shared hosting often withholds the TRIGGER privilege. |
+| G-36 | ➖ | Expense notes are saved (production dropped them). Expenses are not plan-gated (as production). |
+| G-37 | 🟡 | An outlet filter excludes expenses that belong to no outlet; they are reported as `unallocated_expenses` in the outlets report. |
+| G-38 | ✅ | A filter naming another business's outlet (or a non-existent one) is now 404 on every list/report/dashboard route. |
+| G-39 | ✅ | Dashboard `pending_purchase_orders` built in 3f. |
+| G-40 | ✅ | Supplier payments built: pay against received goods only (no prepayment, no overpayment), idempotent, immutable, supplier balance + statement + report columns, race-safe. Payments are not expenses. |
+| G-41 | ✅ | Purchase date filters use the business time zone. |
+| G-42 | ➖ | Purchase routes are not plan-gated (as production). |
+| G-43 | ✅ | Returning goods to a supplier: stock adjustment reason `supplier_return` (removes stock, audited). A full credit-note workflow with the supplier is not built. |
+| G-44 | 🟡 | Receiving into an archived product is refused with an instruction to restore it. |
+| G-45 | 🟡 | No transfer approval step (production had none; the brief called it optional). |
+| G-46 | 🟡 | Stock lost in transit is recorded as variance (view + audit); write-off is a manual adjustment. |
+| G-47 | 🟡 | Archived products already in a transfer still complete. |
+| G-48 | ✅ | Transfer date filters use the business time zone. |
+| G-49 | ✅/🟡 | Customers CSV added (the one production export that was missing from `/reports`). No charts, pivots, scheduled e-mail or XLSX (production had none). |
+| G-50 | ✅ | The report row cap is configurable (`REPORT_MAX_ROWS`) and now tested. |
+| G-51 | 🟡 | Profit/outlets reports require `profit.read`; today equal to `reports.read` for all roles. |
+
+New in Phase 3i, recorded here so nothing is silent:
+
+| ID | Status | Note |
+|---|---|---|
+| G-52 | 🟡 | There is no **ownership transfer**. A business owner who still has team members cannot request account deletion (409 `owns_business_with_staff`); they must remove the team first. |
+| G-53 | ❓ | The nightly/`purge-accounts` cron job must be scheduled on the host (`php bin/cron.php purge-accounts`, daily). Deleted accounts stay "pending" until it runs. |
+| G-54 | 🟡 | Subscription payment records (billing, Phase 3j) are to be kept pseudonymised for tax purposes when they exist; nothing is retained today because no such table exists yet. |
+| G-55 | 🟡 | `GET /me/export` is personal data only; business records are exported by the owner section by section (`GET /businesses/{id}/export`, 1,000 rows per page) to keep memory flat on shared hosting. |
+| G-56 | 🟡 | Staff outlet restriction (`PUT /staff/{id}/outlets`) needs the paid `locations` feature, like multi-outlet itself. Owners are never restricted. |
+| G-57 | 🟡 | PDF documents exist for sales receipts/invoices; payment receipts (repayments) are still JSON only. |
+
 ## A. Missing information (blocking or limiting)
+
+> The rows below keep their original wording for traceability. **The resolution log above is authoritative** where the two differ.
 
 | ID | Gap | Impact | Meanwhile | Needs |
 |---|---|---|---|---|

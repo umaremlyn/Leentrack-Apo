@@ -42,7 +42,7 @@ final class ExpenseService
         }
         $f = ['from' => $from, 'to' => $to, 'category_id' => $this->uuid($q, 'category_id'), 'payment_method' => $this->method($q, 'payment_method'), 'outlet_id' => $this->uuid($q, 'outlet_id'),
             'search' => isset($q['search']) ? (is_string($q['search']) && $q['search'] !== '' && mb_strlen($q['search']) <= 100 ? $q['search'] : throw ApiException::validation(['search' => ['Must be text up to 100 characters.']])) : null];
-        if ($f['outlet_id'] !== null && !$t->canAccessOutlet($f['outlet_id'])) { throw ApiException::notFound('Outlet not found.'); }
+        if ($f['outlet_id'] !== null && (!$t->canAccessOutlet($f['outlet_id']) || !$this->catalog->locationExists($t->businessId, $f['outlet_id']))) { throw ApiException::notFound('Outlet not found.'); }
         $pg = Pager::fromQuery($q, 50);
         $r = $this->repo->list($t->businessId, $f, $t->outletIds, $pg->perPage, $pg->offset());
         return ['rows' => array_map($this->view(...), $r['rows']), 'meta' => $pg->meta($r['total']) + ['summary' => [

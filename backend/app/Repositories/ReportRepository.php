@@ -10,9 +10,11 @@ final class ReportRepository
 {
     public const MAX_ITEM_ROWS = 200_000;
 
-    public function __construct(private readonly PDO $pdo)
+    public function __construct(private readonly PDO $pdo, private readonly int $maxRows = self::MAX_REPORT_ROWS)
     {
     }
+
+    public function maxRows(): int { return $this->maxRows; }
 
     /** @param list<string>|null $outletIds @return array{0:string,1:list<mixed>}|null null = nothing visible */
     private function saleScope(string $bid, ?string $outletId, ?array $outletIds): ?array
@@ -172,7 +174,7 @@ final class ReportRepository
         $st = $this->pdo->prepare("SELECT s.id,s.receipt_number,s.created_at,s.subtotal,s.discount_amount,s.tax_amount,s.total_amount,s.amount_paid,s.payment_method,s.payment_status,s.is_credit,
               c.name AS customer_name,l.name AS outlet_name,p.full_name AS cashier_name
             FROM sales s LEFT JOIN customers c ON c.id = s.customer_id AND c.business_id = s.business_id LEFT JOIN locations l ON l.id = s.outlet_id
-            LEFT JOIN user_profiles p ON p.user_id = s.user_id WHERE $w ORDER BY s.created_at, s.id LIMIT " . (self::MAX_REPORT_ROWS + 1));
+            LEFT JOIN user_profiles p ON p.user_id = s.user_id WHERE $w ORDER BY s.created_at, s.id LIMIT " . ($this->maxRows + 1));
         $st->execute($a);
         return $st->fetchAll();
     }
@@ -189,11 +191,20 @@ final class ReportRepository
         }
         $st = $this->pdo->prepare("SELECT o.id,o.order_number,o.status,o.total_cost,o.created_at,o.ordered_at,o.received_at,s.name AS supplier_name,l.name AS outlet_name,
               COALESCE((SELECT SUM(i.quantity_received * i.unit_cost) FROM purchase_order_items i WHERE i.purchase_order_id = o.id),0) AS received_value,
+              COALESCE((SELECT SUM(p.amount) FROM supplier_payments p WHERE p.purchase_order_id = o.id),0) AS paid_value,
               COALESCE((SELECT SUM(i.quantity_ordered) FROM purchase_order_items i WHERE i.purchase_order_id = o.id),0) AS units_ordered,
               COALESCE((SELECT SUM(i.quantity_received) FROM purchase_order_items i WHERE i.purchase_order_id = o.id),0) AS units_received
-            FROM purchase_orders o LEFT JOIN suppliers s ON s.id = o.supplier_id LEFT JOIN locations l ON l.id = o.outlet_id WHERE $w ORDER BY o.created_at, o.id LIMIT " . (self::MAX_REPORT_ROWS + 1));
+            FROM purchase_orders o LEFT JOIN suppliers s ON s.id = o.supplier_id LEFT JOIN locations l ON l.id = o.outlet_id WHERE $w ORDER BY o.created_at, o.id LIMIT " . ($this->maxRows + 1));
         $st->execute($a);
         return $st->fetchAll();
+    }
+
+    /** Any outlet of this business, active or not (a filter naming someone else's outlet is a 404, not an empty answer). */
+    public function locationExists(string $bid, string $locationId): bool
+    {
+        $st = $this->pdo->prepare('SELECT 1 FROM locations WHERE business_id = ? AND id = ?');
+        $st->execute([$bid, $locationId]);
+        return (bool) $st->fetchColumn();
     }
 
     /** @param list<string>|null $outletIds @return list<array{id:string,name:string}> */
@@ -204,6 +215,16 @@ final class ReportRepository
         if ($outletIds !== null) { $w .= ' AND id IN (' . implode(',', array_fill(0, count($outletIds), '?')) . ')'; array_push($a, ...$outletIds); }
         $st = $this->pdo->prepare("SELECT id,name FROM locations WHERE $w ORDER BY is_default DESC, name, id");
         $st->execute($a);
+        return $st->fetchAll();
+    }
+
+    /** Live (not archived) customers with their stored counters — the source's "customers" CSV. @return list<array<string,mixed>> */
+    public function customersReport(string $bid): array
+    {
+        $st = $this->pdo->prepare('SELECT c.name,c.email,c.phone,g.name AS group_name,c.total_spent,c.visit_count,c.last_visit,c.loyalty_points,c.created_at
+            FROM customers c LEFT JOIN customer_groups g ON g.id = c.customer_group_id AND g.business_id = c.business_id
+            WHERE c.business_id = ? AND c.archived_at IS NULL ORDER BY c.name, c.id LIMIT ' . ($this->maxRows + 1));
+        $st->execute([$bid]);
         return $st->fetchAll();
     }
 }

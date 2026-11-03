@@ -31,6 +31,7 @@ final class SaleController
     {
         $format = $r->query['format'] ?? 'json';
         if (!is_string($format) || !in_array($format, ['json', 'pdf'], true)) { throw ApiException::validation(['format' => ['Must be json or pdf.']]); }
+        if ($format === 'pdf') { [$bytes, $name] = $this->sales->documentPdf($r->tenant(), (string) $r->params['id']); return Response::binary($bytes, 'application/pdf', $name); }
         return Response::ok($this->sales->document($r->tenant(), (string) $r->params['id'], $format));
     }
 

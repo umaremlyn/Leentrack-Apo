@@ -98,7 +98,7 @@ final class ProfitService
     {
         if (!isset($q['outlet_id'])) { return null; }
         if (!is_string($q['outlet_id']) || !Uuid::isValid($q['outlet_id'])) { throw ApiException::validation(['outlet_id' => ['Must be a valid id.']]); }
-        if (!$t->canAccessOutlet($q['outlet_id'])) { throw ApiException::notFound('Outlet not found.'); }
+        if (!$t->canAccessOutlet($q['outlet_id']) || !$this->reports->locationExists($t->businessId, $q['outlet_id'])) { throw ApiException::notFound('Outlet not found.'); }
         return $q['outlet_id'];
     }
 }

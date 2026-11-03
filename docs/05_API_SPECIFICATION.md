@@ -162,3 +162,14 @@ Create body: `{supplier_id?, outlet_id?, notes?, items:[{product_id?|product_nam
 
 ## Phase 3h — implemented (reports)
 `GET /reports` lists the reports the caller may run. `GET /reports/{name}` for `sales|profit|inventory|expenses|credit|purchases|outlets|products`. Common filters: `period` (today|week|month|lastMonth|…|custom) or `from`+`to` (YYYY-MM-DD, inclusive, business time zone), `outlet_id`, `format=json|csv`, `page`, `per_page`. Report-specific: inventory `stock_status=low|out|ok`; expenses `category_id,payment_method,search`; credit `search,overdue`. JSON: `data` = rows, `meta` = pager + `report`, `period`, `columns`, `summary`. CSV: attachment with a BOM and a header row of the same `columns`. Errors: 402 `feature_not_in_plan` (CSV on free), 403, 404 (unknown report / foreign outlet), 413 `range_too_large`, 422 unknown filter.
+
+
+## Phase 3i + gap fixes — implemented
+* **Account:** `GET /me/export` (personal data), `POST /me/deletion {password, confirm:"DELETE"}` → 202 `{status, scheduled_for, grace_days}`, public `POST /auth/cancel-deletion {email, password}`, `GET /businesses/{id}/export[?section=NAME&page=N]` (owner), `PUT|GET|DELETE /me/avatar` (body = image bytes). Login while a deletion is pending → 403 `account_pending_deletion` (only after the password is verified). `409 owns_business_with_staff`, `409 platform_admin`.
+* **Users:** `user.must_change_password` and `user.has_avatar` in login and `/me`.
+* **Staff:** `PUT /staff/{id}/outlets {outlet_ids:[…]}` (empty list = all outlets); staff objects include `outlet_ids`.
+* **Suppliers:** `POST /purchase-orders/{id}/payments {amount, method?, reference?, notes?, client_operation_id}`, `GET /suppliers/{id}/statement`; supplier objects include `balance_owed`; order objects include `paid`, `balance_due`, `payments`.
+* **Reports:** new `customers` report; purchases report gains `paid`, `balance_due`, `paid_to_suppliers`, `payable_to_suppliers`.
+* **Documents:** `GET /sales/{id}/document?format=pdf` → `application/pdf` attachment.
+* **Stock:** adjustment reason `supplier_return`.
+* **Config:** `MAIL_DRIVER=smtp|native|file`, `SMTP_*`, `AVATAR_DIR`, `REPORT_MAX_ROWS`; cron `php bin/cron.php purge-accounts`.

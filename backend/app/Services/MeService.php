@@ -19,6 +19,7 @@ final class MeService
         private readonly SessionRepository $sessions,
         private readonly AuthService $auth,
         private readonly AuditService $audit,
+        private readonly string $avatarDir = '',
     ) {
     }
 
@@ -65,5 +66,49 @@ final class MeService
         $s = $this->sessions->findOwned($id, $a->userId) ?? throw ApiException::notFound();
         $this->sessions->revoke((string) $s['id'], 'user_revoked');
         $this->audit->log('me.session_revoked', $req, $a->userId, null, 'session', $id);
+    }
+
+    private const AVATAR_MAX = 1_000_000;
+    private const AVATAR_TYPES = [IMAGETYPE_JPEG => ['image/jpeg', 'jpg'], IMAGETYPE_PNG => ['image/png', 'png'], IMAGETYPE_WEBP => ['image/webp', 'webp']];
+
+    /** The body IS the image (JPEG, PNG or WebP, up to 1 MB). The type is decided from the bytes, never from the client's header or file name. @return array{has_avatar:bool} */
+    public function setAvatar(AuthContext $a, string $bytes, Request $req): array
+    {
+        if ($this->avatarDir === '') { throw new ApiException('not_configured', 'Avatar storage is not configured.', 503); }
+        if ($bytes === '' || strlen($bytes) > self::AVATAR_MAX) { throw ApiException::validation(['avatar' => ['Send an image of at most 1 MB as the request body.']]); }
+        $info = @getimagesizefromstring($bytes);
+        if ($info === false || !isset(self::AVATAR_TYPES[$info[2]]) || $info[0] < 16 || $info[1] < 16 || $info[0] > 4096 || $info[1] > 4096) {
+            throw ApiException::validation(['avatar' => ['Must be a JPEG, PNG or WebP image between 16 and 4096 pixels on each side.']]);
+        }
+        if (!is_dir($this->avatarDir) && !@mkdir($this->avatarDir, 0750, true) && !is_dir($this->avatarDir)) { throw new ApiException('storage_unavailable', 'Could not store the image.', 503); }
+        $name = $a->userId . '-' . bin2hex(random_bytes(6)) . '.' . self::AVATAR_TYPES[$info[2]][1];
+        if (file_put_contents($this->avatarDir . '/' . $name, $bytes, LOCK_EX) === false) { throw new ApiException('storage_unavailable', 'Could not store the image.', 503); }
+        $old = $this->users->profile($a->userId)['avatar_path'] ?? null;
+        $this->users->setAvatar($a->userId, $name);
+        if ($old !== null) { $this->removeFile((string) $old); }
+        $this->audit->log('me.avatar_set', $req, $a->userId);
+        return ['has_avatar' => true];
+    }
+
+    public function deleteAvatar(AuthContext $a, Request $req): void
+    {
+        $old = $this->users->profile($a->userId)['avatar_path'] ?? null;
+        $this->users->setAvatar($a->userId, null);
+        if ($old !== null) { $this->removeFile((string) $old); }
+        $this->audit->log('me.avatar_removed', $req, $a->userId);
+    }
+
+    /** @return array{0:string,1:string} [bytes, mime] */
+    public function avatar(AuthContext $a): array
+    {
+        $name = $this->users->profile($a->userId)['avatar_path'] ?? null;
+        if ($name === null || !preg_match('/^[0-9a-f-]{36}-[0-9a-f]{12}\.(jpg|png|webp)$/', (string) $name) || !is_file($this->avatarDir . '/' . $name)) { throw ApiException::notFound('No avatar.'); }
+        $ext = substr((string) $name, -3) === 'png' ? 'image/png' : (str_ends_with((string) $name, 'webp') ? 'image/webp' : 'image/jpeg');
+        return [(string) file_get_contents($this->avatarDir . '/' . $name), $ext];
+    }
+
+    private function removeFile(string $name): void
+    {
+        if (preg_match('/^[0-9a-f-]{36}-[0-9a-f]{12}\.(jpg|png|webp)$/', $name) && is_file($this->avatarDir . '/' . $name)) { @unlink($this->avatarDir . '/' . $name); }
     }
 }
