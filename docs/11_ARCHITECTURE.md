@@ -169,3 +169,12 @@ MySQL-backed fixed window (`rate_limits`), usable on shared hosting. Applied per
   * D-78 Provider mismatch (amount, currency, reference) marks the payment `failed` with a reason and audits it; no plan is granted.
   * D-79 Renewal of the running plan extends from its expiry; any other purchase starts now; downgrades are refused while a dearer plan runs (G-58/G-59).
   * D-80 Payment records are retained pseudonymised after account deletion and expire after `PAYMENT_RETENTION_YEARS` (G-54).
+
+## Phase 3k additions (platform administration)
+* **Schema:** `0014_platform_notices`. **Code:** `AdminService`, `AdminController` (replaces the Phase 2 stub), `AccountService::scheduleDeletion/purgeBusiness` (shared with self-service), `bin/make-admin.php --revoke/--list`.
+* **Decisions:**
+  * D-81 `/admin/*` is the only cross-tenant read/write surface. It sits behind `platform_admin` (a row in `platform_admins`, checked per request; others get 404, even if they are owners of businesses) and admin rights open no tenant route.
+  * D-82 Every admin write needs a written reason (5–300 chars) and is audited with before/after and the actor. Destructive writes (plan, status, delete business, disable/delete user) additionally re-check the admin's own password (step-up; wrong attempts are audited and rate-limited).
+  * D-83 A paid plan set by hand must have an expiry (≤5 years); `free` has none. Business deletion needs the exact business name; it reuses the audited purge used for account deletion (payments are kept, pseudonymised).
+  * D-84 Admin cannot act on admins or themselves; disabling a user revokes sessions and re-enabling does not revive them.
+  * D-85 Platform notices are visible to all signed-in users through `GET /notices` (most urgent first; no author id leaked).

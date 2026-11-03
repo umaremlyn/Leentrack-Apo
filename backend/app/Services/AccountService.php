@@ -147,21 +147,31 @@ final class AccountService
         if ($u['password_hash'] === null || !$this->hasher->verify((string) $password, (string) $u['password_hash'])) {
             throw new ApiException('invalid_credentials', 'Password is incorrect.', 403);
         }
-        if ($this->users->isPlatformAdmin($a->userId)) { throw ApiException::conflict('platform_admin', 'Platform administrators must give up admin rights (CLI) before deleting the account.'); }
+        return $this->scheduleDeletion($a->userId, (string) $u['email'], $a->userId, $req, null);
+    }
+
+    /**
+     * Shared by the account holder (above) and by platform admins: refuses platform admins and owners with a team, disables sign-in,
+     * revokes sessions, starts the grace period and e-mails the person. @return array{status:string,scheduled_for:string,grace_days:int}
+     */
+    public function scheduleDeletion(string $userId, string $email, string $actorId, ?Request $req, ?string $adminReason): array
+    {
+        if ($this->users->isPlatformAdmin($userId)) { throw ApiException::conflict('platform_admin', 'Platform administrators must give up admin rights (CLI) before the account can be deleted.'); }
         $blocking = $this->pdo->prepare("SELECT b.name FROM businesses b WHERE b.owner_user_id = ? AND b.deleted_at IS NULL AND EXISTS (SELECT 1 FROM business_members m WHERE m.business_id = b.id AND m.role <> 'owner' AND m.status IN ('active','invited')) ORDER BY b.name");
-        $blocking->execute([$a->userId]);
+        $blocking->execute([$userId]);
         if ($names = $blocking->fetchAll(PDO::FETCH_COLUMN)) {
             throw new ApiException('owns_business_with_staff', 'Remove your team members first. These businesses still have staff: ' . implode(', ', $names) . '.', 409, ['businesses' => array_map('strval', $names)]);
         }
         $now = Clock::now();
         $due = $now->modify('+' . self::GRACE_DAYS . ' days');
-        Db::transaction($this->pdo, function () use ($a, $now, $due) {
-            $this->users->requestDeletion($a->userId, Clock::sql($now), Clock::sql($due));
-            $this->sessions->logoutAll($a->userId, 'account_deletion');
+        Db::transaction($this->pdo, function () use ($userId, $now, $due) {
+            $this->users->requestDeletion($userId, Clock::sql($now), Clock::sql($due));
+            $this->sessions->logoutAll($userId, 'account_deletion');
         });
-        $this->audit->log('account.deletion_requested', $req, $a->userId, null, 'user', $a->userId, null, ['scheduled' => Clock::sql($due)]);
+        $this->audit->log($actorId === $userId ? 'account.deletion_requested' : 'admin.account_deletion_requested', $req, $actorId, null, 'user', $userId, null, ['scheduled' => Clock::sql($due)] + ($adminReason !== null ? ['reason' => $adminReason] : []));
         $date = $due->format('Y-m-d');
-        $this->mailer->send((string) $u['email'], 'Your LeenTrack account will be deleted', "We received a request to delete your LeenTrack account.\n\nOn $date your account and the businesses you own, with all their records, will be permanently deleted.\n\nIf this was not you, or you changed your mind, sign in is disabled but you can cancel before $date from the sign-in page (\"Cancel account deletion\"), using your e-mail and password.");
+        $who = $actorId === $userId ? 'We received a request to delete your LeenTrack account.' : 'A LeenTrack administrator has scheduled your account for deletion.';
+        $this->mailer->send($email, 'Your LeenTrack account will be deleted', "$who\n\nOn $date your account and the businesses you own, with all their records, will be permanently deleted.\n\nIf this was not you, or you changed your mind, sign in is disabled but you can cancel before $date from the sign-in page (\"Cancel account deletion\"), using your e-mail and password.");
         return ['status' => 'pending_deletion', 'scheduled_for' => $date, 'grace_days' => self::GRACE_DAYS];
     }
 
@@ -204,6 +214,16 @@ final class AccountService
         return $out;
     }
 
+    /** Deletes one business and all its records (payments excepted, see RETAINED). Must run inside a transaction. */
+    public function purgeBusiness(string $bid): void
+    {
+        foreach (self::PURGE_ORDER as $table) {
+            $this->pdo->prepare(self::VIA_PARENT[$table] ?? "DELETE FROM `$table` WHERE business_id = ?")->execute([$bid]);
+        }
+        $this->pdo->prepare('UPDATE payments SET user_id = NULL WHERE business_id = ?')->execute([$bid]);
+        $this->pdo->prepare('DELETE FROM businesses WHERE id = ?')->execute([$bid]);
+    }
+
     private function purgeUser(string $uid): int
     {
         $lock = $this->pdo->prepare("SELECT status FROM users WHERE id = ? AND anonymised_at IS NULL FOR UPDATE");
@@ -217,10 +237,7 @@ final class AccountService
             $others = $this->pdo->prepare("SELECT COUNT(*) FROM business_members WHERE business_id = ? AND role <> 'owner' AND status IN ('active','invited')");
             $others->execute([$bid]);
             if ((int) $others->fetchColumn() > 0) { throw new \RuntimeException('business gained staff after the request'); }
-            foreach (self::PURGE_ORDER as $table) {
-                $this->pdo->prepare(self::VIA_PARENT[$table] ?? "DELETE FROM `$table` WHERE business_id = ?")->execute([$bid]);
-            }
-            $this->pdo->prepare('DELETE FROM businesses WHERE id = ?')->execute([$bid]);
+            $this->purgeBusiness($bid);
         }
         $this->pdo->prepare('DELETE FROM business_members WHERE user_id = ?')->execute([$uid]);           // memberships elsewhere (member_outlets cascade)
         $avatar = $this->users->profile($uid)['avatar_path'] ?? null;

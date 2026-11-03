@@ -68,3 +68,7 @@ Upload new code to a fresh directory, `composer install --no-dev`, run `php bin/
 2. In the Paystack dashboard register the webhook URL `https://YOUR-API-HOST/api/v1/webhooks/paystack`. Use **test** keys first and make one test payment end to end (docs G-60).
 3. Schedule `php bin/cron.php expire-plans` daily (it also removes payment records past their retention period). Without it, plans still stop at expiry (access is checked live) but the stored plan stays "growth" until it runs.
 4. Outbound HTTPS from the host to `api.paystack.co` must be allowed (see G-16).
+
+
+## Phase 3k: platform administrators
+Create the first operator after registering normally through the app: `php bin/make-admin.php you@example.com`. List with `--list`; remove with `--revoke you@example.com` (the last admin cannot be revoked). Use a strong, unique password and a verified e-mail: admin actions ask for that password again.

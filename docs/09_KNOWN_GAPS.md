@@ -62,6 +62,17 @@ Rule applied to every gap: if the production product does something and the rebu
 | G-50 | ✅ | The report row cap is configurable (`REPORT_MAX_ROWS`) and now tested. |
 | G-51 | 🟡 | Profit/outlets reports require `profit.read`; today equal to `reports.read` for all roles. |
 
+New in Phase 3k (platform administration):
+
+| ID | Status | Note |
+|---|---|---|
+| G-65 | ➖ | Production's admin could set a paid plan with **no expiry** (it would then never end), delete a business or a profile with one click and no record of why, and a "broadcast notice" was only an audit-log row nobody saw. Now: a paid plan needs an expiry, every change needs a written reason, destructive ones need the admin's password again, business deletion needs the business name typed, user deletion uses the same 14-day grace as self-service, and notices are really shown to users (`GET /notices`). |
+| G-66 | 🟡 | There is no "impersonate / sign in as" feature, on purpose. Admins see cross-tenant data only through `/admin/*`; admin rights do not open any tenant route. |
+| G-67 | 🟡 | The source's "pricing form" only showed a message; prices are code constants (`PriceTable`) validated against production by tests, so changing a price is a deliberate code change + deploy, not an admin form. Say if you want editable prices. |
+| G-68 | 🟡 | Notices go to every signed-in user; no per-business targeting, no e-mail broadcast. |
+| G-69 | 🟡 | Suspending a business makes it behave as the free plan (production's `plan_status` semantics); it does not lock the owner out. A full lock-out would be a different status — say if you want it. |
+| G-70 | 🟡 | Admins are created/revoked only with `php bin/make-admin.php` (the last admin cannot be revoked). There is no admin-management endpoint, deliberately. |
+
 New in Phase 3j (billing):
 
 | ID | Status | Note |
@@ -70,7 +81,7 @@ New in Phase 3j (billing):
 | G-59 | 🟡 | You cannot buy a cheaper plan while a dearer one is running (409 `downgrade_not_allowed`); production let you, silently wasting the dearer plan. |
 | G-60 | ❓ | **Nothing has been run against the real Paystack.** The gateway is tested against a local stand-in server and recorded-shape fixtures. Needs a Paystack **test** secret key and your webhook URL registered, then one end-to-end test payment. |
 | G-61 | 🟡 | Subscriptions are one-off charges renewed by the owner (as production: its `subscription.disable` handler had nothing to disable). No automatic card recurring billing and no "payment due" reminders. |
-| G-62 | 🟡 | A refund notice marks the payment `refunded` but does **not** remove access; that is a human decision (platform admin tools arrive in 3k). |
+| G-62 | ✅ | A refund notice marks the payment `refunded` but does not remove access by itself; the platform admin now decides with `POST /admin/businesses/{id}/plan` or `/status` (reason + password, audited). |
 | G-63 | 🟡 | Flutterwave remains unbuilt (G-09); the gateway interface is ready for it. |
 | G-64 | ❓ | The webhook endpoint is public by design (authenticated by the provider's HMAC-SHA512 signature). Paystack also publishes source IP addresses; an IP allow-list at the web server would add a second layer but is host-specific. |
 

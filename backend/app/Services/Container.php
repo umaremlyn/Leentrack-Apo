@@ -125,6 +125,7 @@ final class Container
         return $this->once('billing', fn () => new BillingService($this->app->pdo(), new BillingRepository($this->app->pdo()), $this->gateway(), $this->mailer(), $this->audit(),
             (string) ($this->app->config['paystack']['callback_url'] ?? ''), (int) ($this->app->config['payment_retention_years'] ?? 7)));
     }
+    public function admin(): AdminService { return $this->once('admin', fn () => new AdminService($this->app->pdo(), $this->users(), $this->sessions(), $this->account(), $this->hasher(), $this->audit(), $this->limiter(), (bool) $this->app->config['rate_limit_enabled'])); }
     public function reports(): ReportService { return $this->once('reports', fn () => new ReportService($this->reportRepo(), $this->saleRepo(), $this->catalog(), $this->profit(), $this->expenses(), $this->credit())); }
 
     public function locations(): LocationService { return $this->once('loc', fn () => new LocationService($this->tenants(), $this->audit())); }

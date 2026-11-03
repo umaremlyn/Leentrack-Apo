@@ -24,7 +24,7 @@ return static function (Router $r, Container $c): void {
     $rep = new Lazy(fn () => new ReportController($c->reports()));
     $bill = new Lazy(fn () => new BillingController($c->billing()));
     $fin = new Lazy(fn () => new FinanceController($c->expenses(), $c->profit(), $c->dashboard()));
-    $admin = new Lazy(fn () => new AdminController($c->app()));
+    $admin = new Lazy(fn () => new AdminController($c->admin()));
 
     $r->get('/health', [$health, 'show'], [], true);
 
@@ -173,5 +173,21 @@ return static function (Router $r, Container $c): void {
     $r->post('/webhooks/paystack', [$bill, 'paystackWebhook'], ['throttle:600,60'], true);
 
     // --- platform administration ---
-    $r->get('/admin/stats', [$admin, 'stats'], ['auth', 'platform_admin']);
+    $pa = ['auth', 'platform_admin'];
+    $r->get('/admin/stats', [$admin, 'stats'], $pa);
+    $r->get('/admin/businesses', [$admin, 'businesses'], $pa);
+    $r->get('/admin/businesses/{id}', [$admin, 'business'], $pa);
+    $r->post('/admin/businesses/{id}/plan', [$admin, 'setPlan'], array_merge($pa, ['throttle:60,3600']));
+    $r->post('/admin/businesses/{id}/status', [$admin, 'setStatus'], array_merge($pa, ['throttle:60,3600']));
+    $r->post('/admin/businesses/{id}/delete', [$admin, 'deleteBusiness'], array_merge($pa, ['throttle:20,3600']));
+    $r->get('/admin/users', [$admin, 'users'], $pa);
+    $r->post('/admin/users/{id}/disable', [$admin, 'disableUser'], array_merge($pa, ['throttle:60,3600']));
+    $r->post('/admin/users/{id}/enable', [$admin, 'enableUser'], array_merge($pa, ['throttle:60,3600']));
+    $r->post('/admin/users/{id}/delete', [$admin, 'deleteUser'], array_merge($pa, ['throttle:20,3600']));
+    $r->get('/admin/payments', [$admin, 'payments'], $pa);
+    $r->get('/admin/audit', [$admin, 'audit'], $pa);
+    $r->get('/admin/notices', [$admin, 'notices'], $pa);
+    $r->post('/admin/notices', [$admin, 'createNotice'], array_merge($pa, ['throttle:30,3600']));
+    $r->post('/admin/notices/{id}/end', [$admin, 'endNotice'], $pa);
+    $r->get('/notices', [$admin, 'activeNotices'], ['auth']);
 };
