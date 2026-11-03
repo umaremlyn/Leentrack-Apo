@@ -178,3 +178,12 @@ MySQL-backed fixed window (`rate_limits`), usable on shared hosting. Applied per
   * D-83 A paid plan set by hand must have an expiry (≤5 years); `free` has none. Business deletion needs the exact business name; it reuses the audited purge used for account deletion (payments are kept, pseudonymised).
   * D-84 Admin cannot act on admins or themselves; disabling a user revokes sessions and re-enabling does not revive them.
   * D-85 Platform notices are visible to all signed-in users through `GET /notices` (most urgent first; no author id leaked).
+
+## Phase 3l additions (settings, scheduled jobs, reconciliation)
+* **Schema:** `0015_ops` (`stock_alert_settings`, `job_runs`). **Code:** `StockAlertService`, `ReconciliationService`, `JobService`, `MeService::preferences`, `bin/cron.php` rewritten around a job registry.
+* **Decisions:**
+  * D-86 Cron contract: `php bin/cron.php list|<job>`; one run per job at a time (exclusive lock file; an overlapping tick exits quietly with code 0); every run recorded in `job_runs`; exit codes 0 ok/skipped, 1 failed, 2 usage, 4 findings. A run stuck "running" for over an hour shows as `crashed`; a job past its expected interval is flagged `attention`.
+  * D-87 Reconciliation is read-only and reports ids and counts only (no names or amounts); findings are e-mailed to platform admins and visible at `GET /admin/jobs/reconcile`. Finding drift is a result (job `ok`, exit 4), not a job failure.
+  * D-88 Low-stock alerts use the same rule as the dashboard and reports (active stocked product with stock ≤ reorder level); a mail counts as sent only when there was something to report; test mails are rate-limited; owners who are disabled or pending deletion are skipped.
+  * D-89 Per-person preferences (`notifications`, `language`, `privacy`) are stored on the profile, validated strictly (booleans only, language code pattern) and merged over defaults; malformed stored data never reaches a client.
+  * D-90 `GET /admin/health` reports facts about the host and configuration without secrets, so the operator can verify a Truehost setup instead of assuming it.

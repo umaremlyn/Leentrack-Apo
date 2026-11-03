@@ -270,6 +270,7 @@ final class AuthService
             'is_platform_admin' => $this->users->isPlatformAdmin((string) $u['id']),
             'must_change_password' => (bool) ($u['must_change_password'] ?? 0),
             'has_avatar' => ($p['avatar_path'] ?? null) !== null,
+            'preferences' => MeService::prefs($p['notification_prefs'] ?? null),
         ];
     }
 }

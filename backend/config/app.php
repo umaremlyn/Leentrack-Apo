@@ -10,6 +10,7 @@ return [
     'version' => '0.1.0',
     'api_prefix' => '/api/v1',
     'log_dir' => dirname(__DIR__) . '/storage/logs',
+    'lock_dir' => Env::get('LOCK_DIR', dirname(__DIR__) . '/storage/locks'),
     'avatar_dir' => Env::get('AVATAR_DIR', dirname(__DIR__) . '/storage/avatars'),
     'log_level' => Env::get('LOG_LEVEL', 'info'),
     'cors_origins' => array_values(array_filter(array_map('trim', explode(',', (string) Env::get('CORS_ALLOWED_ORIGINS', ''))))),

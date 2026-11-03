@@ -87,6 +87,11 @@ final class UserRepository
         $this->pdo->prepare('DELETE FROM auth_sessions WHERE user_id = ?')->execute([$userId]);
     }
 
+    public function setPrefs(string $userId, string $json): void
+    {
+        $this->pdo->prepare('UPDATE user_profiles SET notification_prefs = ? WHERE user_id = ?')->execute([$json, $userId]);
+    }
+
     public function setAvatar(string $userId, ?string $path): void
     {
         $this->pdo->prepare('UPDATE user_profiles SET avatar_path = ? WHERE user_id = ?')->execute([$path, $userId]);

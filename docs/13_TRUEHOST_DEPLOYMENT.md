@@ -72,3 +72,17 @@ Upload new code to a fresh directory, `composer install --no-dev`, run `php bin/
 
 ## Phase 3k: platform administrators
 Create the first operator after registering normally through the app: `php bin/make-admin.php you@example.com`. List with `--list`; remove with `--revoke you@example.com` (the last admin cannot be revoked). Use a strong, unique password and a verified e-mail: admin actions ask for that password again.
+
+
+## Phase 3l: the complete cron table
+`php bin/cron.php list` prints it. Suggested cPanel entries (use the full PHP path from the checklist above):
+
+| Schedule | Command | Purpose |
+|---|---|---|
+| every 30 minutes | `cron.php housekeeping` | expired tokens/sessions/rate limits, old job history |
+| hourly | `cron.php low-stock-alert` | low-stock e-mails (honours each owner's daily/hourly choice) |
+| daily 01:00 | `cron.php expire-plans` | move ended paid plans to free; drop old retained payment records |
+| daily 02:15 | `cron.php purge-accounts` | finish account deletions after the 14-day grace |
+| daily 03:30 | `cron.php reconcile` | read-only audit; exit code 4 + e-mail to admins when something does not add up |
+
+Overlapping runs are impossible (lock files in `LOCK_DIR`, default `backend/storage/locks`, must be writable). After the first day open `GET /admin/jobs` and `GET /admin/health` as the platform admin: every job should show a recent `ok` run and the health report should have no `fail`.

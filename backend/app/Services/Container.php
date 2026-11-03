@@ -126,6 +126,9 @@ final class Container
             (string) ($this->app->config['paystack']['callback_url'] ?? ''), (int) ($this->app->config['payment_retention_years'] ?? 7)));
     }
     public function admin(): AdminService { return $this->once('admin', fn () => new AdminService($this->app->pdo(), $this->users(), $this->sessions(), $this->account(), $this->hasher(), $this->audit(), $this->limiter(), (bool) $this->app->config['rate_limit_enabled'])); }
+    public function jobs(): JobService { return $this->once('jobs', fn () => new JobService($this->app->pdo(), (string) ($this->app->config['lock_dir'] ?? sys_get_temp_dir() . '/lt-locks'))); }
+    public function stockAlerts(): StockAlertService { return $this->once('alerts', fn () => new StockAlertService($this->app->pdo(), $this->mailer(), $this->audit(), $this->limiter(), (string) $this->app->config['web_url'], (bool) $this->app->config['rate_limit_enabled'])); }
+    public function reconciliation(): ReconciliationService { return $this->once('recon', fn () => new ReconciliationService($this->app->pdo())); }
     public function reports(): ReportService { return $this->once('reports', fn () => new ReportService($this->reportRepo(), $this->saleRepo(), $this->catalog(), $this->profit(), $this->expenses(), $this->credit())); }
 
     public function locations(): LocationService { return $this->once('loc', fn () => new LocationService($this->tenants(), $this->audit())); }

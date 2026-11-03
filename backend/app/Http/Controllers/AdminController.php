@@ -10,7 +10,7 @@ use LeenTrack\Services\AdminService;
 /** Platform operator endpoints. Every route using this controller sits behind the `platform_admin` middleware (404 for everyone else). */
 final class AdminController
 {
-    public function __construct(private readonly AdminService $svc)
+    public function __construct(private readonly AdminService $svc, private readonly \LeenTrack\Services\JobService $jobs, private readonly array $config)
     {
     }
 
@@ -31,6 +31,15 @@ final class AdminController
     public function notices(Request $r): Response { return Response::ok($this->svc->notices()); }
     public function createNotice(Request $r): Response { return Response::ok($this->svc->createNotice($r->auth(), $r->json(), $r), [], 201); }
     public function endNotice(Request $r): Response { return Response::ok($this->svc->endNotice($r->auth(), $this->id($r), $r)); }
+
+    public function jobs(Request $r): Response { return Response::ok($this->jobs->overview()); }
+    public function jobHistory(Request $r): Response
+    {
+        $job = (string) $r->params['job'];
+        if (!isset(\LeenTrack\Services\JobService::JOBS[$job])) { throw \LeenTrack\Core\ApiException::notFound(); }
+        return Response::ok($this->jobs->history($job));
+    }
+    public function health(Request $r): Response { $h = $this->jobs->health($this->config, dirname(__DIR__, 3) . '/database/migrations'); return Response::ok($h, [], 200); }
 
     /** Any signed-in user. */
     public function activeNotices(Request $r): Response { return Response::ok($this->svc->activeNotices()); }

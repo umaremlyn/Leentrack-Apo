@@ -44,7 +44,7 @@ Rule applied to every gap: if the production product does something and the rebu
 | G-32 | 🟡 | `refund_due` is returned and audited; no till/cash drawer ledger (production had none). Decide if you want one. |
 | G-33 | 🟡 | Discount breakdown after an edit is informational; totals are exact. |
 | G-34 | ⏳ | Importer rule recorded for Phase 8. |
-| G-35 | ⏳ | Repayment immutability is application-level; the nightly reconciliation job (3l) will detect drift. DB triggers are not used because shared hosting often withholds the TRIGGER privilege. |
+| G-35 | ✅ | Repayment immutability stays application-level (DB triggers are not used: shared hosting often withholds the TRIGGER privilege), and the nightly `reconcile` job now independently re-checks 16 invariants (stock, customer totals, loyalty, credit balances, repayments, purchase receipts, supplier payments, transfers, paid plans, payments) and tells the platform admins by e-mail when anything does not add up. It reports; it never edits. |
 | G-36 | ➖ | Expense notes are saved (production dropped them). Expenses are not plan-gated (as production). |
 | G-37 | 🟡 | An outlet filter excludes expenses that belong to no outlet; they are reported as `unallocated_expenses` in the outlets report. |
 | G-38 | ✅ | A filter naming another business's outlet (or a non-existent one) is now 404 on every list/report/dashboard route. |
@@ -61,6 +61,18 @@ Rule applied to every gap: if the production product does something and the rebu
 | G-49 | ✅/🟡 | Customers CSV added (the one production export that was missing from `/reports`). No charts, pivots, scheduled e-mail or XLSX (production had none). |
 | G-50 | ✅ | The report row cap is configurable (`REPORT_MAX_ROWS`) and now tested. |
 | G-51 | 🟡 | Profit/outlets reports require `profit.read`; today equal to `reports.read` for all roles. |
+
+New in Phase 3l (settings, jobs, reconciliation):
+
+| ID | Status | Note |
+|---|---|---|
+| G-71 | 🟡 | The low-stock alert address is not verified: an owner could point alerts at someone else's mailbox. Mitigated by a 5-per-hour limit on test mails, the 20 h / 1 h cool-down on the job, and a plain text body that carries only product names. A confirmation link would be the next step. |
+| G-72 | 🟡 | The alert e-mail is plain text (production sent a styled HTML mail) and covers the whole business, not one outlet. |
+| G-73 | ⏳ | `paid_plans_have_an_expiry` will flag any imported business that production left on a paid plan without an expiry (its admin tool allowed that). Phase 8's importer must give such businesses an expiry or downgrade them, and say so in its report. |
+| G-74 | 🟡 | The SMS and marketing preferences are stored (as production stored them in the browser) but nothing sends SMS (G-10) and there are no marketing e-mails. Transactional mail (verification, reset, deletion notice, receipts) is always sent. |
+| G-75 | 🟡 | Language and notification/privacy preferences now live on the server, per person (production: per browser). The time zone stays a property of the business (its default outlet), as everywhere else in the API. |
+| G-76 | 🟡 | Job locks are files on the host's disk. On a single shared-hosting account that is exact; if the API ever runs on several servers with separate disks, overlapping runs would need a database lock instead. |
+| G-77 | 🟡 | `GET /admin/health` replaces the guesswork of G-16 for the host: PHP version and extensions, DB version, pending migrations, writable folders, mail/payment/CORS configuration and job freshness, never secrets. |
 
 New in Phase 3k (platform administration):
 
@@ -90,7 +102,7 @@ New in Phase 3i, recorded here so nothing is silent:
 | ID | Status | Note |
 |---|---|---|
 | G-52 | 🟡 | There is no **ownership transfer**. A business owner who still has team members cannot request account deletion (409 `owns_business_with_staff`); they must remove the team first. |
-| G-53 | ❓ | The nightly/`purge-accounts` cron job must be scheduled on the host (`php bin/cron.php purge-accounts`, daily). Deleted accounts stay "pending" until it runs. |
+| G-53 | ✅/❓ | The cron jobs still have to be scheduled on the host (`php bin/cron.php list` prints the table), but a job that stops running is now visible: `GET /admin/jobs` flags it and `reconcile` reports accounts whose deletion date passed. |
 | G-54 | ✅/❓ | Payment records are now kept when a business is deleted, pseudonymised (business and payer removed), and deleted by the expiry job after `PAYMENT_RETENTION_YEARS` (default 7). The legal period needs counsel (G-13). |
 | G-55 | 🟡 | `GET /me/export` is personal data only; business records are exported by the owner section by section (`GET /businesses/{id}/export`, 1,000 rows per page) to keep memory flat on shared hosting. |
 | G-56 | 🟡 | Staff outlet restriction (`PUT /staff/{id}/outlets`) needs the paid `locations` feature, like multi-outlet itself. Owners are never restricted. |

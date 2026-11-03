@@ -55,6 +55,45 @@ final class MeService
         return $this->show($a)['user'];
     }
 
+    private const PREF_DEFAULTS = ['notifications' => ['email' => true, 'sms' => false, 'marketing' => false], 'language' => 'en', 'privacy' => ['show_profile' => true, 'share_data' => false]];
+
+    /** Server-side home for what the source kept only in the browser's localStorage. @param array<string,mixed> $body @return array<string,mixed> */
+    public function preferences(AuthContext $a, array $body, Request $req): array
+    {
+        $v = new Validator($body);
+        $v->only(['notifications', 'language', 'privacy']);
+        $cur = self::prefs($this->users->profile($a->userId)['notification_prefs'] ?? null);
+        foreach (['notifications' => ['email', 'sms', 'marketing'], 'privacy' => ['show_profile', 'share_data']] as $group => $keys) {
+            if (!$v->has($group)) { continue; }
+            $in = $body[$group];
+            if (!is_array($in) || array_is_list($in) && $in !== []) { $v->addError($group, 'Must be an object.'); continue; }
+            foreach ($in as $k => $val) {
+                if (!in_array($k, $keys, true)) { $v->addError("$group.$k", 'Unknown setting.'); }
+                elseif (!is_bool($val)) { $v->addError("$group.$k", 'Must be true or false.'); }
+                else { $cur[$group][$k] = $val; }
+            }
+        }
+        if ($v->has('language')) {
+            $l = $v->string('language', 2, 5);
+            if ($l !== null && !preg_match('/^[a-z]{2}(-[A-Z]{2})?$/', $l)) { $v->addError('language', 'Use a language code such as en or fr-CA.'); } else { $cur['language'] = $l; }
+        }
+        $v->done();
+        $this->users->setPrefs($a->userId, json_encode($cur, JSON_THROW_ON_ERROR));
+        $this->audit->log('me.preferences', $req, $a->userId);
+        return $cur;
+    }
+
+    /** @return array<string,mixed> stored preferences merged over the defaults (unknown or malformed stored data is ignored) */
+    public static function prefs(mixed $raw): array
+    {
+        $d = self::PREF_DEFAULTS;
+        $s = is_string($raw) ? json_decode($raw, true) : null;
+        if (!is_array($s)) { return $d; }
+        foreach (['notifications', 'privacy'] as $g) { foreach ($d[$g] as $k => $_) { if (isset($s[$g][$k]) && is_bool($s[$g][$k])) { $d[$g][$k] = $s[$g][$k]; } } }
+        if (isset($s['language']) && is_string($s['language']) && preg_match('/^[a-z]{2}(-[A-Z]{2})?$/', $s['language'])) { $d['language'] = $s['language']; }
+        return $d;
+    }
+
     /** @return list<array<string,mixed>> */
     public function sessions(AuthContext $a): array
     {

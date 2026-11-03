@@ -37,7 +37,7 @@ final class AccountService
         'purchase_receipt_items', 'purchase_receipts', 'purchase_order_items', 'supplier_payments', 'purchase_orders', 'suppliers',
         'transfer_items', 'transfers', 'stock_movements', 'stock_levels',
         'expenses', 'expense_categories', 'products', 'categories',
-        'customers', 'customer_groups', 'loyalty_settings', 'business_branding', 'document_sequences',
+        'customers', 'customer_groups', 'loyalty_settings', 'stock_alert_settings', 'business_branding', 'document_sequences',
         'member_outlets', 'business_members', 'audit_logs', 'locations',
     ];
     /** Business-scoped tables that are deliberately KEPT when a business is deleted. `payments` stays (pseudonymised: business_id → NULL by the foreign key, user_id blanked here) for tax/accounting; the housekeeping job deletes it after PAYMENT_RETENTION_YEARS. */
@@ -57,7 +57,7 @@ final class AccountService
         'expense_categories' => ['expense_categories', 'id', []], 'expenses' => ['expenses', 'id', []],
         'suppliers' => ['suppliers', 'id', []], 'purchase_orders' => ['purchase_orders', 'id', []], 'purchase_order_items' => ['purchase_order_items', 'id', []],
         'transfers' => ['transfers', 'id', []], 'transfer_items' => ['transfer_items', 'id', []],
-        'purchase_receipts' => ['purchase_receipts', 'id', []], 'supplier_payments' => ['supplier_payments', 'id', []], 'payments' => ['payments', 'created_at, id', []],
+        'purchase_receipts' => ['purchase_receipts', 'id', []], 'supplier_payments' => ['supplier_payments', 'id', []], 'payments' => ['payments', 'created_at, id', []], 'stock_alert_settings' => ['stock_alert_settings', 'business_id', []],
         'purchase_receipt_items' => ['purchase_receipt_items', 'receipt_id, item_id', [], 'x.* FROM purchase_receipt_items x JOIN purchase_receipts r ON r.id = x.receipt_id WHERE r.business_id = ?'],
         'member_outlets' => ['member_outlets', 'member_id, location_id', [], 'x.* FROM member_outlets x JOIN business_members m ON m.id = x.member_id WHERE m.business_id = ?'],
     ];

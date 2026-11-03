@@ -10,7 +10,7 @@ use LeenTrack\Services\MeService;
 
 final class MeController
 {
-    public function __construct(private readonly MeService $me, private readonly AccountService $account)
+    public function __construct(private readonly MeService $me, private readonly AccountService $account, private readonly \LeenTrack\Services\StockAlertService $alerts)
     {
     }
 
@@ -25,5 +25,9 @@ final class MeController
     public function avatarSet(Request $r): Response { return Response::ok($this->me->setAvatar($r->auth(), $r->rawBody(), $r)); }
     public function avatarDelete(Request $r): Response { $this->me->deleteAvatar($r->auth(), $r); return Response::ok(['has_avatar' => false]); }
     public function avatarShow(Request $r): Response { [$bytes, $mime] = $this->me->avatar($r->auth()); return Response::binary($bytes, $mime); }
+    public function alertShow(Request $r): Response { return Response::ok($this->alerts->settings($r->tenant())); }
+    public function alertSave(Request $r): Response { return Response::ok($this->alerts->save($r->tenant(), $r->json(), $r)); }
+    public function alertTest(Request $r): Response { return Response::ok($this->alerts->test($r->tenant(), $r)); }
+    public function preferences(Request $r): Response { return Response::ok($this->me->preferences($r->auth(), $r->json(), $r)); }
     public function businessExport(Request $r): Response { $x = $this->account->exportBusiness($r->tenant(), $r->query, $r); return Response::ok($x['data'], $x['meta']); }
 }

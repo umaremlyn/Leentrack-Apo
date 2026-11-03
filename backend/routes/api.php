@@ -12,7 +12,7 @@ use LeenTrack\Services\Container;
 return static function (Router $r, Container $c): void {
     $health = new Lazy(fn () => new HealthController($c->app()));
     $auth = new Lazy(fn () => new AuthController($c->auth(), $c->sessions()));
-    $me = new Lazy(fn () => new MeController($c->me(), $c->account()));
+    $me = new Lazy(fn () => new MeController($c->me(), $c->account(), $c->stockAlerts()));
     $biz = new Lazy(fn () => new BusinessController($c->businesses(), $c->tenants()));
     $staff = new Lazy(fn () => new StaffController($c->staff()));
     $loc = new Lazy(fn () => new LocationController($c->locations()));
@@ -24,7 +24,7 @@ return static function (Router $r, Container $c): void {
     $rep = new Lazy(fn () => new ReportController($c->reports()));
     $bill = new Lazy(fn () => new BillingController($c->billing()));
     $fin = new Lazy(fn () => new FinanceController($c->expenses(), $c->profit(), $c->dashboard()));
-    $admin = new Lazy(fn () => new AdminController($c->admin()));
+    $admin = new Lazy(fn () => new AdminController($c->admin(), $c->jobs(), $c->app()->config));
 
     $r->get('/health', [$health, 'show'], [], true);
 
@@ -55,6 +55,10 @@ return static function (Router $r, Container $c): void {
     $r->post('/businesses', [$biz, 'create'], ['auth', 'throttle:10,3600']);
 
     // --- business-scoped (membership verified on every request) ---
+    $r->get('/businesses/{id}/alert-settings', [$me, 'alertShow'], ['auth', 'tenant:path']);
+    $r->put('/businesses/{id}/alert-settings', [$me, 'alertSave'], ['auth', 'tenant:path']);
+    $r->post('/businesses/{id}/alert-settings/test', [$me, 'alertTest'], ['auth', 'tenant:path', 'throttle:20,3600']);
+    $r->patch('/me/preferences', [$me, 'preferences'], ['auth']);
     $r->get('/businesses/{id}/export', [$me, 'businessExport'], ['auth', 'tenant:path']);
     $r->get('/businesses/{id}', [$biz, 'show'], ['auth', 'tenant:path']);
     $r->patch('/businesses/{id}', [$biz, 'update'], ['auth', 'tenant:path']);
@@ -186,6 +190,9 @@ return static function (Router $r, Container $c): void {
     $r->post('/admin/users/{id}/delete', [$admin, 'deleteUser'], array_merge($pa, ['throttle:20,3600']));
     $r->get('/admin/payments', [$admin, 'payments'], $pa);
     $r->get('/admin/audit', [$admin, 'audit'], $pa);
+    $r->get('/admin/jobs', [$admin, 'jobs'], $pa);
+    $r->get('/admin/jobs/{job}', [$admin, 'jobHistory'], $pa);
+    $r->get('/admin/health', [$admin, 'health'], $pa);
     $r->get('/admin/notices', [$admin, 'notices'], $pa);
     $r->post('/admin/notices', [$admin, 'createNotice'], array_merge($pa, ['throttle:30,3600']));
     $r->post('/admin/notices/{id}/end', [$admin, 'endNotice'], $pa);
