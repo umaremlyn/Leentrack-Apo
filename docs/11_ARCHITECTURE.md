@@ -133,3 +133,14 @@ MySQL-backed fixed window (`rate_limits`), usable on shared hosting. Applied per
   * D-57 Outlet rules: visible if either end is the user's outlet; creating/editing/dispatching needs the sending outlet (403/422 otherwise), receiving needs the destination; either end may cancel.
   * D-58 Lock order: transfer row → product rows (ascending id) → level rows, so opposite-direction transfers cannot deadlock (tested).
   * D-59 No approval step (listed as optional in the brief; absent in the source) — see G-45.
+
+## Phase 3h additions
+* **Services:** `ReportService`, `ReportController`; new read queries in `ReportRepository` (`salesReport`, `purchasesReport`, `outlets`). No new tables.
+* **Endpoints:** `GET /reports` (what this user may run) and `GET /reports/{sales|profit|inventory|expenses|credit|purchases|outlets|products}`.
+* **Decisions:**
+  * D-60 Reports are views over existing code: profit via `ProfitService::compute`, expenses via `ExpenseService::list`, credit via `CreditService::list`, inventory totals equal `/stock/valuation` and the dashboard counts. There is never a second definition of a number (tests pin each pair).
+  * D-61 JSON is paged (`page`, `per_page`); `format=csv` returns the whole report (cap 50,000 rows → 413 `range_too_large`), UTF-8 BOM, RFC-4180 quoting, text cells formula-injection-safe. CSV is plan-gated `exportReports` (as in the source); JSON is not.
+  * D-62 Periods and displayed times use the business time zone; `period` or `from`+`to` as on `/profit`. Inventory and credit are point-in-time and reject period filters.
+  * D-63 Voided sales are listed in the sales report but excluded from every total; draft/cancelled purchase orders are excluded from commitments.
+  * D-64 Outlets report: per-outlet figures plus business totals; expenses without an outlet are shown as `unallocated_expenses` (never silently dropped), visible only to unrestricted users.
+  * D-65 Inventory report uses the dashboard rule: low = 0 < stock <= reorder level; totals cover active stocked items.

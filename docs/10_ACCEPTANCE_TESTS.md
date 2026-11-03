@@ -131,3 +131,7 @@ Supplier CRUD/archive/restore/search/validation · roles + S-XBIZ on all 15 rout
 
 ## Phase 3g — implemented tests (`TransferTest`)
 Full flow with stock/movement checks and conservation · partial shipment + shortfall variance (view and audit) · all-or-nothing dispatch with insufficient stock · bounds, status machine, cancel (in-transit return) · create/edit validation incl. forged fields · idempotency (replay, content conflict, other transfer) · roles, S-XBIZ, outlet-restricted manager · list filters · **parallel processes:** 8 transfers racing for 10 units (4 each) → exactly 2 leave; 8 duplicate dispatches → 1 applied; 8 duplicate receives with one op id → 1 applied + 7 replays; 8 opposite-direction two-product transfers dispatched and received concurrently → no deadlock, nothing created or destroyed.
+
+
+## Phase 3h — implemented tests (`ReportTest`)
+Permissions, plan gate for CSV, unknown reports/filters, tenant isolation · sales report vs independent SQL (voided excluded from totals, local-time dates, paging vs full CSV, CSV escaping and formula-injection neutralisation) · profit/products/outlets pinned to `/profit`, outlets reconcile with unallocated expenses · profit unknown ≠ 0 · inventory pinned to `/stock/valuation` and the dashboard counts (boundary, inactive, service rows, outlet scoping, CSV) · expenses/credit/purchases pinned to their modules (deleted expense, formula-looking text, drafts/cancelled excluded, received value) · outlet-restricted manager · empty business.

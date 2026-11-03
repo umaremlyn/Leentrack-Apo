@@ -103,6 +103,8 @@ final class Container
 
     public function transfers(): TransferService { return $this->once('transfers', fn () => new TransferService($this->app->pdo(), new TransferRepository($this->app->pdo()), $this->catalog(), $this->stock(), $this->audit())); }
 
+    public function reports(): ReportService { return $this->once('reports', fn () => new ReportService($this->reportRepo(), $this->saleRepo(), $this->catalog(), $this->profit(), $this->expenses(), $this->credit())); }
+
     public function locations(): LocationService { return $this->once('loc', fn () => new LocationService($this->tenants(), $this->audit())); }
     public function me(): MeService { return $this->once('me', fn () => new MeService($this->users(), $this->tenants(), $this->sessionsRepo(), $this->auth(), $this->audit())); }
 }

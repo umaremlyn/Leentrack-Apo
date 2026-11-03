@@ -1,6 +1,6 @@
 # LeenTrack Rebuild — Project Status
 
-_Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current phase: **Phase 3 — Business operations: 3a ✅ · 3b ✅ · 3c ✅ · 3d ✅ · 3e ✅ · 3f ✅ · 3g (stock transfers) COMPLETE; 3h (reports & CSV export) next**_
+_Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current phase: **Phase 3 — Business operations: 3a ✅ · 3b ✅ · 3c ✅ · 3d ✅ · 3e ✅ · 3f ✅ · 3g ✅ · 3h (reports & CSV export) COMPLETE; 3i (staff extras / account lifecycle) next**_
 
 ## Ground rules in force
 * Production (Vercel + Supabase) is **never touched**. `umaremlyn/Track` is read-only to this project (verified unmodified).
@@ -14,8 +14,16 @@ _Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current
 | 0 Source audit | ✅ docs 01–10 |
 | 1 Foundation | ✅ backend skeleton + migrator + rate limiter + Money; Flutter scaffold + adaptive shell + API client; docs 11–12 |
 | 2 Database & core (auth, tenancy, policies) | ✅ identity + tenancy + authorization + plan guard + audit; deployment guide drafted |
-| 3 Business operations | 🔶 3a catalogue & stock ✅ · 3b customers/groups/loyalty ✅ · 3c POS/sales/documents ✅ · 3d credit ✅ · 3e expenses/profit/dashboard ✅ · 3f suppliers/purchases ✅ · 3g transfers ✅ · 3h reports ⏳ next · 3h reports · 3i staff extras/account lifecycle · 3j billing · 3k admin · 3l settings/branding/cron |
+| 3 Business operations | 🔶 3a catalogue & stock ✅ · 3b customers/groups/loyalty ✅ · 3c POS/sales/documents ✅ · 3d credit ✅ · 3e expenses/profit/dashboard ✅ · 3f suppliers/purchases ✅ · 3g transfers ✅ · 3h reports ✅ · 3i staff extras/account lifecycle ⏳ next · 3h reports · 3i staff extras/account lifecycle · 3j billing · 3k admin · 3l settings/branding/cron |
 | 4–10 | ⏳ not started |
+
+## Session 11 report (Phase 3h — reports and CSV export)
+**Completed:** `ReportService` + `ReportController`, three read queries in `ReportRepository`; `GET /reports` and `GET /reports/{sales|profit|inventory|expenses|credit|purchases|outlets|products}` with JSON (paged) and CSV (whole report, BOM, quoting, formula-injection-safe, plan-gated `exportReports`). Every report reuses the module that owns the number (profit, expenses, credit, valuation, dashboard counts) so no figure has two definitions. Docs 05, 09 (G-49…G-51), 10, 11 (D-60…D-65) updated.
+**Tests executed (actual):** full suite against MySQL 8.4.6 → **OK, 242 tests, 55,023 assertions**. New `ReportTest`: 8 tests / 271 assertions; each report is compared with an independent SQL recomputation or with the endpoint that owns the figure.
+**Mutation checks (13):** 12 caught. The first run had 4 survivors; 3 exposed real test gaps which I fixed by adding data (an item exactly at its reorder level, an inactive item with stock, an expense dated the day after the range) and re-ran: all three now caught. The remaining survivor — removing the extra `profit.read` check on the profit/outlets reports — is an equivalent mutant today (owner and manager hold both permissions; no role has `reports.read` without `profit.read`), recorded as G-51.
+**Test-writing errors fixed:** one wrong hand count (Beans quantity 3, not 4) and several vacuous assertions I had written (removed).
+**Not done / not verified:** 50,000-row cap not exercised (G-50); no PDF/XLSX/charts/scheduled reports (G-49); a customers CSV is not part of `/reports`; clients do not use these endpoints; no real data; PHP 8.3.6.
+**Current phase:** 3 (3a–3h done). **Next task:** Phase 3i — staff extras and account lifecycle: outlet-assignment API for members, `must_change_password` flag for legacy-password users (G-21), `GET /me/export` and `DELETE /me` (account deletion with ownership rules, retention policy per G-13), avatar handling decision, granular permission overrides only if the owner confirms; tests incl. cross-business, last-owner protection, session revocation.
 
 ## Session 10 report (Phase 3g — stock transfers)
 **Completed:** migration `0010_transfers`; `TransferRepository`, `TransferService`, `TransferController`; 7 routes (list, create, show, edit pending, dispatch, receive, cancel); permission `transfers.manage`. Transfers now really move stock (the source only changed a status label): dispatch debits the sending outlet, receive credits the destination by what arrived, shortfalls stay recorded as variance, cancel in transit returns stock to the sender. Docs 05, 09 (G-45…G-48), 10, 11 (D-53…D-59) updated.
@@ -207,4 +215,4 @@ _Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current
 G-01 schema-only dump · G-02 data + `auth.users` export (only when ready for rehearsal) · G-03 which of 016–019 are applied · G-09 Flutterwave confirmation · G-10 SMS gateway · G-16 Truehost PHP facts (`phpinfo`) — and a **review of S-01/S-03/S-04/S-06 against the live project**, independent of this rebuild.
 
 ## Exact next task
-Phase 3h — reports and CSV export (see Session 10 report).
+Phase 3i — staff extras and account lifecycle (see Session 11 report).

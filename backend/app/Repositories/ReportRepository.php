@@ -156,4 +156,54 @@ final class ReportRepository
         $r = $st->fetch(PDO::FETCH_NUM);
         return ['products' => (int) $r[0], 'low' => (int) $r[1], 'out' => (int) $r[2]];
     }
+
+    public const MAX_REPORT_ROWS = 50_000;
+
+    /** Every sale in the period, ALL statuses (the report separates voided ones). Fetches one extra row so callers can detect an over-large report. @param list<string>|null $outletIds @return list<array<string,mixed>> */
+    public function salesReport(string $bid, string $fromUtc, string $toUtc, ?string $outletId, ?array $outletIds): array
+    {
+        $w = 's.business_id = ? AND s.created_at >= ? AND s.created_at < ?'; $a = [$bid, $fromUtc, $toUtc];
+        if ($outletId !== null) { $w .= ' AND s.outlet_id = ?'; $a[] = $outletId; }
+        if ($outletIds !== null) {
+            if (!$outletIds) { return []; }
+            $w .= ' AND s.outlet_id IN (' . implode(',', array_fill(0, count($outletIds), '?')) . ')';
+            array_push($a, ...$outletIds);
+        }
+        $st = $this->pdo->prepare("SELECT s.id,s.receipt_number,s.created_at,s.subtotal,s.discount_amount,s.tax_amount,s.total_amount,s.amount_paid,s.payment_method,s.payment_status,s.is_credit,
+              c.name AS customer_name,l.name AS outlet_name,p.full_name AS cashier_name
+            FROM sales s LEFT JOIN customers c ON c.id = s.customer_id AND c.business_id = s.business_id LEFT JOIN locations l ON l.id = s.outlet_id
+            LEFT JOIN user_profiles p ON p.user_id = s.user_id WHERE $w ORDER BY s.created_at, s.id LIMIT " . (self::MAX_REPORT_ROWS + 1));
+        $st->execute($a);
+        return $st->fetchAll();
+    }
+
+    /** Purchase orders created in the period with the value actually received so far. @param list<string>|null $outletIds @return list<array<string,mixed>> */
+    public function purchasesReport(string $bid, string $fromUtc, string $toUtc, ?string $outletId, ?array $outletIds): array
+    {
+        $w = 'o.business_id = ? AND o.created_at >= ? AND o.created_at < ?'; $a = [$bid, $fromUtc, $toUtc];
+        if ($outletId !== null) { $w .= ' AND o.outlet_id = ?'; $a[] = $outletId; }
+        if ($outletIds !== null) {
+            if (!$outletIds) { return []; }
+            $w .= ' AND o.outlet_id IN (' . implode(',', array_fill(0, count($outletIds), '?')) . ')';
+            array_push($a, ...$outletIds);
+        }
+        $st = $this->pdo->prepare("SELECT o.id,o.order_number,o.status,o.total_cost,o.created_at,o.ordered_at,o.received_at,s.name AS supplier_name,l.name AS outlet_name,
+              COALESCE((SELECT SUM(i.quantity_received * i.unit_cost) FROM purchase_order_items i WHERE i.purchase_order_id = o.id),0) AS received_value,
+              COALESCE((SELECT SUM(i.quantity_ordered) FROM purchase_order_items i WHERE i.purchase_order_id = o.id),0) AS units_ordered,
+              COALESCE((SELECT SUM(i.quantity_received) FROM purchase_order_items i WHERE i.purchase_order_id = o.id),0) AS units_received
+            FROM purchase_orders o LEFT JOIN suppliers s ON s.id = o.supplier_id LEFT JOIN locations l ON l.id = o.outlet_id WHERE $w ORDER BY o.created_at, o.id LIMIT " . (self::MAX_REPORT_ROWS + 1));
+        $st->execute($a);
+        return $st->fetchAll();
+    }
+
+    /** @param list<string>|null $outletIds @return list<array{id:string,name:string}> */
+    public function outlets(string $bid, ?array $outletIds): array
+    {
+        if ($outletIds !== null && !$outletIds) { return []; }
+        $w = 'business_id = ?'; $a = [$bid];
+        if ($outletIds !== null) { $w .= ' AND id IN (' . implode(',', array_fill(0, count($outletIds), '?')) . ')'; array_push($a, ...$outletIds); }
+        $st = $this->pdo->prepare("SELECT id,name FROM locations WHERE $w ORDER BY is_default DESC, name, id");
+        $st->execute($a);
+        return $st->fetchAll();
+    }
 }

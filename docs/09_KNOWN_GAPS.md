@@ -44,6 +44,9 @@ Each item: what is missing, why it matters, what I did/will do meanwhile, and wh
 | G-46 | Stock lost in transit is recorded as variance only; there is no automatic write-off movement or claim workflow. | Variance must be investigated manually | Visible in view + audit | Owner decision |
 | G-47 | Transfers of an item whose product is archived mid-flight still complete (the goods physically exist); archived products cannot be added to new transfers. | — | Intentional | — |
 | G-48 | Transfer list `from`/`to` filters use UTC day boundaries (same as G-41). | — | — | — |
+| G-49 | Reports have no charts/pivots, no scheduled e-mail and no PDF/XLSX output (CSV + JSON only). The source exported CSV for sales, inventory and customers; the brief's extra reports (profit, expenses, credit, purchases, outlets, products) are new. A **customers** CSV is not part of `/reports` (customers have their own list endpoint). | Feature scope | CSV/JSON only | Owner decision |
+| G-50 | The 50,000-row report cap (413) is implemented but not exercised by a test (would need 50k seeded rows). | Untested limit | Documented | — |
+| G-51 | `profit` and `outlets` reports require `profit.read`; today only owner and manager hold it, and both also hold `reports.read`, so that extra permission check cannot be distinguished in a test. | None today | Revisit if granular permissions arrive (3i) | — |
 
 ## B. Semantics the source leaves ambiguous (owner decisions)
 

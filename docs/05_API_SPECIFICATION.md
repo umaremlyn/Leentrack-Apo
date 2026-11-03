@@ -158,3 +158,7 @@ Create body: `{supplier_id?, outlet_id?, notes?, items:[{product_id?|product_nam
 
 ## Phase 3g — implemented (stock transfers)
 `GET/POST /transfers`, `GET/PATCH /transfers/{id}` (PATCH pending only), `POST /transfers/{id}/dispatch|receive|cancel`. Create: `{from_location_id, to_location_id, notes?, items:[{product_id, quantity}]}`. Dispatch/receive: `{client_operation_id | Idempotency-Key, items?:[{item_id, quantity}]}` — omitted items ship / arrive in full; returns the transfer (201, or 200 with `meta.replayed`). Errors: `insufficient_stock`, `invalid_status`, `over_quantity`, `not_pending`, `idempotency_conflict` (409). Number `TR-000001` server-issued. Owner/manager only.
+
+
+## Phase 3h — implemented (reports)
+`GET /reports` lists the reports the caller may run. `GET /reports/{name}` for `sales|profit|inventory|expenses|credit|purchases|outlets|products`. Common filters: `period` (today|week|month|lastMonth|…|custom) or `from`+`to` (YYYY-MM-DD, inclusive, business time zone), `outlet_id`, `format=json|csv`, `page`, `per_page`. Report-specific: inventory `stock_status=low|out|ok`; expenses `category_id,payment_method,search`; credit `search,overdue`. JSON: `data` = rows, `meta` = pager + `report`, `period`, `columns`, `summary`. CSV: attachment with a BOM and a header row of the same `columns`. Errors: 402 `feature_not_in_plan` (CSV on free), 403, 404 (unknown report / foreign outlet), 413 `range_too_large`, 422 unknown filter.
