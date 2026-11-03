@@ -1,17 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'app_shell.dart';
+import 'app/providers.dart';
 import 'config/app_config.dart';
-import 'features/settings/health_provider.dart';
-import 'network/api_exception.dart';
+import 'features/auth/login_screen.dart';
+import 'features/home/home_screen.dart';
 
 void main() {
   runApp(const ProviderScope(child: LeenTrackApp()));
 }
 
 class LeenTrackApp extends StatelessWidget {
-  const LeenTrackApp({super.key});
+  const LeenTrackApp({super.key, this.configured});
+
+  /// Overridable for tests; the real app asks the build configuration.
+  final bool? configured;
 
   @override
   Widget build(BuildContext context) {
@@ -19,50 +22,26 @@ class LeenTrackApp extends StatelessWidget {
       title: 'LeenTrack',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(colorSchemeSeed: const Color(0xFF2563EB), useMaterial3: true),
-      home: const _Home(),
+      home: _Root(configured: configured ?? AppConfig.isConfigured),
     );
   }
 }
 
-/// Phase 1 home: proves shell + networking against the real API. Real screens arrive in Phases 2–5.
-class _Home extends StatefulWidget {
-  const _Home();
-  @override
-  State<_Home> createState() => _HomeState();
-}
-
-class _HomeState extends State<_Home> {
-  String _selected = 'dashboard';
-
-  @override
-  Widget build(BuildContext context) {
-    return AppShell(
-      role: 'owner', // Phase 1 only: the role will come from the authenticated membership in Phase 2.
-      selectedId: _selected,
-      onSelect: (id) => setState(() => _selected = id),
-      body: _selected == 'dashboard' ? const _ServerStatus() : Center(child: Text('$_selected — not built yet')),
-    );
-  }
-}
-
-class _ServerStatus extends ConsumerWidget {
-  const _ServerStatus();
+class _Root extends ConsumerWidget {
+  const _Root({required this.configured});
+  final bool configured;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    if (!AppConfig.isConfigured) {
-      return const Center(child: Text('API_BASE_URL is not set. Run with --dart-define=API_BASE_URL=https://…/api/v1'));
+    if (!configured) {
+      return const Scaffold(body: Center(child: Padding(padding: EdgeInsets.all(24), child: Text('API_BASE_URL is not set. Run with --dart-define=API_BASE_URL=https://…/api/v1'))));
     }
-    final health = ref.watch(serverHealthProvider);
-    return Center(
-      child: health.when(
-        loading: () => const CircularProgressIndicator(),
-        error: (e, _) => Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(e is ApiException ? e.message : 'Unexpected error'),
-          TextButton(onPressed: () => ref.invalidate(serverHealthProvider), child: const Text('Retry')),
-        ]),
-        data: (h) => Text('Server ${h.status} · db ${h.db} · v${h.version}'),
-      ),
-    );
+    final app = ref.watch(sessionProvider);
+    return switch (app.stage) {
+      Stage.loading => const Scaffold(body: Center(child: CircularProgressIndicator())),
+      Stage.signedOut => const LoginScreen(),
+      Stage.chooseBusiness => const BusinessPicker(),
+      Stage.ready => const HomeScreen(),
+    };
   }
 }

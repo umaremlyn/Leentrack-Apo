@@ -108,6 +108,18 @@ New in Phase 3j (billing):
 | G-63 | 🟡 | Flutterwave remains unbuilt (G-09); the gateway interface is ready for it. |
 | G-64 | ❓ | The webhook endpoint is public by design (authenticated by the provider's HMAC-SHA512 signature). Paystack also publishes source IP addresses; an IP allow-list at the web server would add a second layer but is host-specific. |
 
+New in Phase 5 (Flutter app), recorded here so nothing is silent:
+
+| ID | Status | Note |
+|---|---|---|
+| G-84 | ✅ | **Found by the end-to-end test against the real server, fixed in the PHP API.** `accept-prices` on a price *increase* failed when the cash the customer had already handed over no longer covered the new total, and the failure turned the held operation into a terminal `rejected`. Now the operation is left exactly as it was and the manager gets `409 payment_short` with an explanation (record the difference with the customer, record the sale online, or discard). **Decision for you:** should a manager be able to accept the new price and record the shortfall as customer credit instead? I did not build it: it creates a debt for a customer who may not agree. |
+| G-85 | 🟡 | Offline screens built in Phase 5: sign-in, business choice, POS (search, cart, discount inputs, customer, cash/card/transfer, credit), provisional receipt, customers (create offline), stock view, sync status and the manager inbox. **Not built yet (needs the server's full picture, Phases 6–7):** sales history, credit sales, expenses, purchases, transfers, reports, staff, billing, settings editing, barcode camera scanning, printing. These show an honest "later phase" message. |
+| G-86 | 🟡 | Amounts on screen have no currency symbol/code yet (the business currency is stored from `settings`). Cosmetic, but a till should show it; planned with the Phase 6 design pass. |
+| G-87 | 🟡 | Manual discount, points redemption and group discount are *inputs* the till sends; it shows a provisional total from a port of the server maths (verified against the 2,268 golden vectors) and sends it as `expected_total`. **Owner decision G-80 stays open:** the app sends `expected_total` always, so a price change after the quote holds the sale for a manager instead of silently charging a different amount. |
+| G-88 | 🟡 | Device id is created once per installation and kept in the platform keychain/keystore; it survives sign-out. Reinstalling creates a new device id (harmless: operations are idempotent by their own id). |
+| G-89 | 🟡 | One SQLite file per user per business. Signing out keeps the file (so queued sales are not lost); there is no "wipe this device" button yet, and the file is not encrypted at rest (the OS app sandbox protects it; SQLCipher is a Phase 9 hardening option). |
+| G-90 | ❓ | **No native build was possible in this sandbox** (no Android SDK, no Linux desktop toolchain; iOS/macOS need a Mac). Verified: `flutter analyze` clean, 68 unit/widget tests, 6 end-to-end tests against the real PHP API and MySQL. Not verified: that the app compiles and runs as an APK / IPA / Windows / macOS / Linux binary, `flutter_secure_storage` and `sqlite3` native libraries on each OS, and real-device behaviour (camera, keyboard, offline switching). |
+
 New in Phase 3i, recorded here so nothing is silent:
 
 | ID | Status | Note |

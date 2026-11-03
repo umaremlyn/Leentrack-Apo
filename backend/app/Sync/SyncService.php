@@ -217,6 +217,11 @@ final class SyncService
         $occ = $row['occurred_at'] ?? Clock::sql();
         $out = $this->run($as, (string) $row['type'], $payload, $opId, (string) $occ, $req);
         if ($out['status'] === 'error') { throw new ApiException('server_error', 'The server could not process this operation. Try again.', 503); }
+        // Found by the Flutter end-to-end test (G-84): at a HIGHER price the cash the customer already handed over may no longer cover the sale.
+        // Do not destroy the held operation (it would turn into a terminal "rejected"); leave it as it was and tell the manager exactly why.
+        if ($acceptPrices && $out['status'] === 'rejected' && isset($out['fields']['payment.amount'])) {
+            throw ApiException::conflict('payment_short', 'At the new prices the sale costs more than the customer paid. The operation is unchanged: record the difference with the customer, then record this sale online, or discard it.');
+        }
         // request_hash stays what the DEVICE sent (its identity for duplicate detection), even after a manager changed the stored payload (accept-prices)
         $this->pdo->prepare('UPDATE sync_operations SET status = ?, code = ?, message = ?, result = ?, payload = ?, processed_at = ?, resolved_by = ?, resolved_at = ? WHERE id = ?')
             ->execute([$out['status'], $out['code'] ?? null, isset($out['message']) ? mb_substr((string) $out['message'], 0, 300) : null, isset($out['result']) ? json_encode($out['result']) : null,

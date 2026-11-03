@@ -5,7 +5,7 @@ import 'package:dio/dio.dart';
 import 'api_exception.dart';
 
 /// Thin client over the LeenTrack envelope: `{ok,data,meta}` / `{ok:false,error:{code,message,fields}}`.
-/// Auth headers, business context and token refresh are added in Phase 2 via interceptors.
+/// Authentication, business context and token refresh live one level up, in [AuthenticatedClient].
 class ApiClient {
   ApiClient({required String baseUrl, Dio? dio})
       : _dio = dio ??
@@ -21,11 +21,13 @@ class ApiClient {
 
   final Dio _dio;
 
-  Future<ApiResult> get(String path, {Map<String, dynamic>? query}) =>
-      _send(() => _dio.get<dynamic>(path, queryParameters: query));
+  Future<ApiResult> get(String path, {Map<String, dynamic>? query, Map<String, String>? headers}) => request('GET', path, query: query, headers: headers);
 
-  Future<ApiResult> post(String path, {Object? body}) =>
-      _send(() => _dio.post<dynamic>(path, data: body));
+  Future<ApiResult> post(String path, {Object? body, Map<String, String>? headers}) => request('POST', path, body: body, headers: headers);
+
+  /// Any method, with optional extra headers (authentication and business context are added by [AuthenticatedClient]).
+  Future<ApiResult> request(String method, String path, {Object? body, Map<String, dynamic>? query, Map<String, String>? headers}) =>
+      _send(() => _dio.request<dynamic>(path, data: body, queryParameters: query, options: Options(method: method, headers: headers)));
 
   Future<ApiResult> _send(Future<Response<dynamic>> Function() call) async {
     final Response<dynamic> res;

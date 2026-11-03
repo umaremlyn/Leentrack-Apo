@@ -308,6 +308,22 @@ final class SyncTest extends ApiTestCase
         $this->assertSame(409, $this->call('POST', "/sync/operations/{$b['id']}/accept-prices", [], $o['token'], $o['business_id'])[0]);
     }
 
+    public function testAcceptingHigherPricesWhenTheCashHandedOverIsNoLongerEnoughKeepsTheHeldOperationUntouched(): void
+    {
+        $o = $this->shop();
+        $p = $this->product($o, 'Rice', '100.00', 50);
+        $a = $this->op('sale.checkout', $this->sale([[$p, 2]], ['expected_total' => '180.00', 'payment' => ['mode' => 'full', 'method' => 'cash', 'amount' => '180.00']]));
+        $this->assertSame('price_changed', $this->results($this->push($o, [$a])[1])[0]['code']);
+        [$s, $j] = $this->call('POST', "/sync/operations/{$a['id']}/accept-prices", [], $o['token'], $o['business_id']);
+        $this->assertSame([409, 'payment_short'], [$s, $j['error']['code']], json_encode($j));
+        $this->assertSame([0, 50], [$this->rows('sales'), $this->stock($p['id'])]);
+        $row = $this->pdo->query("SELECT status, code FROM sync_operations WHERE client_operation_id = '{$a['id']}'")->fetch();
+        $this->assertSame(['conflict', 'price_changed'], [$row['status'], $row['code']], 'the held operation must not be turned into a terminal rejection');
+        $this->assertSame(0, $this->rows('audit_logs', "action = 'sync.accept_prices'"));
+        // the manager can still discard it
+        $this->assertSame(200, $this->call('POST', "/sync/operations/{$a['id']}/discard", ['reason' => 'Customer paid at the old price'], $o['token'], $o['business_id'])[0]);
+    }
+
     public function testExpectedTotalAlsoGuardsTheOnlineEndpointAndIsNotARequiredField(): void
     {
         $o = $this->shop();
