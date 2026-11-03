@@ -185,3 +185,7 @@ Create body: `{supplier_id?, outlet_id?, notes?, items:[{product_id?|product_nam
 
 ## Phase 3l — implemented (settings, jobs)
 Owner only: `GET|PUT /businesses/{id}/alert-settings {enabled, email, frequency: daily|hourly}`, `POST /businesses/{id}/alert-settings/test` (sends now if anything is low; 5 per hour). Any user: `PATCH /me/preferences {notifications:{email,sms,marketing}, language, privacy:{show_profile,share_data}}`; `preferences` is part of the `user` object in login and `/me`. Platform admin: `GET /admin/jobs`, `GET /admin/jobs/{job}` (history with summaries; `reconcile` carries the findings), `GET /admin/health`. Existing endpoints already cover the rest of the source's Settings page: tax rate (`PATCH /businesses/{id}`), currency (`PATCH /me`), time zone (`PATCH /locations/{id}`), password and sessions, account deletion.
+
+
+## Phase 4 — implemented (offline sync) — full contract in docs/14_SYNC_PROTOCOL.md
+`GET /sync/info` · `POST /sync/push {device_id, device_time, operations[≤100]}` · `POST /sync/pull {cursors, limit, resources}` · `GET /sync/operations[?status=attention|conflict|rejected|applied|discarded]` · `POST /sync/operations/{id}/retry|accept-prices|discard`. Also: `POST /sales` accepts an optional `expected_total` (409 `price_changed` when the total is different now).

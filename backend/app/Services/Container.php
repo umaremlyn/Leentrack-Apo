@@ -129,6 +129,8 @@ final class Container
     public function jobs(): JobService { return $this->once('jobs', fn () => new JobService($this->app->pdo(), (string) ($this->app->config['lock_dir'] ?? sys_get_temp_dir() . '/lt-locks'))); }
     public function stockAlerts(): StockAlertService { return $this->once('alerts', fn () => new StockAlertService($this->app->pdo(), $this->mailer(), $this->audit(), $this->limiter(), (string) $this->app->config['web_url'], (bool) $this->app->config['rate_limit_enabled'])); }
     public function reconciliation(): ReconciliationService { return $this->once('recon', fn () => new ReconciliationService($this->app->pdo())); }
+    public function sync(): \LeenTrack\Sync\SyncService { return $this->once('sync', fn () => new \LeenTrack\Sync\SyncService($this->app->pdo(), $this->tenants(), $this->sales(), $this->credit(), $this->customers(), $this->expenses(), $this->stock(), $this->audit())); }
+    public function syncPull(): \LeenTrack\Sync\SyncPullService { return $this->once('syncPull', fn () => new \LeenTrack\Sync\SyncPullService($this->app->pdo())); }
     public function reports(): ReportService { return $this->once('reports', fn () => new ReportService($this->reportRepo(), $this->saleRepo(), $this->catalog(), $this->profit(), $this->expenses(), $this->credit())); }
 
     public function locations(): LocationService { return $this->once('loc', fn () => new LocationService($this->tenants(), $this->audit())); }

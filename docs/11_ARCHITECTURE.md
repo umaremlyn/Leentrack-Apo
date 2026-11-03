@@ -187,3 +187,14 @@ MySQL-backed fixed window (`rate_limits`), usable on shared hosting. Applied per
   * D-88 Low-stock alerts use the same rule as the dashboard and reports (active stocked product with stock ≤ reorder level); a mail counts as sent only when there was something to report; test mails are rate-limited; owners who are disabled or pending deletion are skipped.
   * D-89 Per-person preferences (`notifications`, `language`, `privacy`) are stored on the profile, validated strictly (booleans only, language code pattern) and merged over defaults; malformed stored data never reaches a client.
   * D-90 `GET /admin/health` reports facts about the host and configuration without secrets, so the operator can verify a Truehost setup instead of assuming it.
+
+## Phase 4 additions (offline sync, server side)
+* **Schema:** `0016_sync` (`sync_operations`). **Code:** `Sync\SyncService` (push, inbox, retry/accept-prices/discard), `Sync\SyncPullService`, `SyncController`; small hooks in `SaleService::checkout` (`expected_total`, internal occurred-at), `StockService::adjust` (idempotent by operation id), `CustomerService/ExpenseService::create` (client-chosen id), `CustomerRepository::adjustStats` (last visit never moves backwards). Contract: `docs/14_SYNC_PROTOCOL.md`.
+* **Decisions:**
+  * D-91 Sync applies every operation through the same services as the online API, so no rule exists twice. The ledger is a cache of outcomes and an inbox, not the source of truth: each operation type is also idempotent in its own table (sale/repayment by operation id, new records by client-chosen id, stock adjustment by movement reference), so losing a ledger row is harmless (tested by deleting the ledger and re-sending).
+  * D-92 Outcomes: applied · conflict (may succeed later) · rejected (will not as sent) · discarded (manager gave up) · error (nothing recorded, send again). Applied/rejected/discarded are remembered; conflict is retried on every re-send.
+  * D-93 Identity of an operation is a hash of its type and canonicalised payload (key order irrelevant); a manager's change to a stored payload (accept-prices) does not change that identity.
+  * D-94 Time: client time is corrected by the measured device clock error, never in the future, never older than 60 days; the sale is dated when it happened and numbered when it arrives.
+  * D-95 Conflict inbox: managers see everyone's, others only their own; retry runs as the original cashier (their role, their sale); discard needs a reason and keeps the record.
+  * D-96 Pull is per-resource and keyset-paged; exhausted resources return an exact cursor when idle and a 10-second rewind when changes are recent; tombstones are `archived_at` (products, customers), `is_active` (outlets) and `reference_ids` (categories, groups).
+  * D-97 Cost prices are never pulled by users who may not read them; restricted users pull only their outlets' stock and outlets.

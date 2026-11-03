@@ -49,10 +49,11 @@ final class SaleService
      * @param array<string,mixed> $body
      * @return array{sale:array<string,mixed>,replayed:bool}
      */
-    public function checkout(TenantContext $t, array $body, ?string $idempotencyKey, Request $req): array
+    public function checkout(TenantContext $t, array $body, ?string $idempotencyKey, Request $req, ?string $occurredAtUtc = null): array
     {
         $t->require('sales.create');
         $in = $this->parseCheckout($t, $body, $idempotencyKey);
+        $in['occurred_at'] = $occurredAtUtc;                       // set only by the offline sync engine: when the sale really happened (server-adjusted for clock skew)
         $bid = $t->businessId;
 
         // Plan limit (the source only showed a banner and never blocked the till, so this is opt-in: see docs G-29).
@@ -91,7 +92,7 @@ final class SaleService
     private function checkoutTx(TenantContext $t, array $in, Request $req): string
     {
         $bid = $t->businessId;
-        $now = Clock::sql();
+        $now = $in['occurred_at'] ?? Clock::sql();
 
         // 1. customer first (D-26)
         $cust = null;
@@ -147,6 +148,10 @@ final class SaleService
         $tax = $taxable->percent($this->percentString((string) $biz['tax_rate']));
         $total = $taxable->add($tax);
 
+        if ($in['expected_total'] !== null && $in['expected_total']->minor !== $total->minor) {
+            throw new ApiException('price_changed', 'The total is now ' . $total->toString() . ', not ' . $in['expected_total']->toString() . '. Prices changed since the customer was quoted.', 409, ['actual_total' => [$total->toString()], 'expected_total' => [$in['expected_total']->toString()]]);
+        }
+
         // 4. payment
         if ($in['mode'] === 'full') {
             if ($in['amount']->lt($total)) { throw ApiException::validation(['payment.amount' => ['Amount paid must be equal to or greater than the total.']]); }
@@ -176,6 +181,9 @@ final class SaleService
             'payment_method' => $method, 'payment_status' => $status, 'is_credit' => $in['mode'] === 'credit', 'notes' => $in['notes'],
             'client_operation_id' => $in['operation_id'], 'request_hash' => $in['hash'], 'client_created_at' => $in['client_created_at'],
         ]);
+        if (($in['occurred_at'] ?? null) !== null) {                // an offline sale is dated when it happened, not when it reached the server
+            $this->pdo->prepare('UPDATE sales SET created_at = ? WHERE id = ?')->execute([$in['occurred_at'], $saleId]);
+        }
 
         foreach ($lines as $l) {
             $this->sales->insertItem(['id' => $l['id'], 'sale_id' => $saleId, 'business_id' => $bid, 'product_id' => $l['product_id'], 'product_name' => $l['name'], 'item_type' => $l['type'],
@@ -199,7 +207,7 @@ final class SaleService
 
         // 8. receipt number last (short lock on the counter)
         $seq = $this->sales->nextSequence($bid, 'sale');
-        $this->sales->setReceiptNumber($bid, $saleId, sprintf('SALE-%s-%06d', gmdate('Ymd'), $seq));
+        $this->sales->setReceiptNumber($bid, $saleId, sprintf('SALE-%s-%06d', gmdate('Ymd', strtotime($now . ' UTC')), $seq));
 
         $this->audit->log('sale.create', $req, $t->userId, $bid, 'sale', $saleId, null, ['total' => $total->toString(), 'items' => count($lines), 'mode' => $in['mode'], 'customer_id' => $in['customer_id']]);
         return $saleId;
@@ -532,7 +540,8 @@ final class SaleService
     private function parseCheckout(TenantContext $t, array $body, ?string $headerKey): array
     {
         $v = new Validator($body);
-        $v->only(['client_operation_id', 'outlet_id', 'customer_id', 'items', 'discount', 'payment', 'notes', 'client_created_at']);
+        $v->only(['client_operation_id', 'outlet_id', 'customer_id', 'items', 'discount', 'payment', 'notes', 'client_created_at', 'expected_total']);
+        $expected = $v->has('expected_total') ? $v->money('expected_total', false) : null;      // optional guard: refuse if the price changed since the customer was quoted
         $op = $v->has('client_operation_id') ? $v->uuid('client_operation_id') : null;
         if ($op === null && $headerKey !== null) {
             if (Uuid::isValid($headerKey)) { $op = $headerKey; } else { $v->addError('client_operation_id', 'Idempotency-Key must be a UUID.'); }
@@ -609,7 +618,7 @@ final class SaleService
         ksort($sorted);
         $hash = hash('sha256', json_encode([$outlet, $cust, $sorted, $order, $manual->toString(), $apply, $points, $mode, $method, $amount?->toString(), $notes], JSON_UNESCAPED_UNICODE));
         return ['operation_id' => (string) $op, 'outlet_id' => $outlet, 'customer_id' => $cust, 'items' => $items, 'order' => $order, 'manual' => $manual, 'apply_group' => $apply, 'points' => $points,
-            'mode' => $mode, 'method' => $method, 'amount' => $amount ?? Money::zero(), 'notes' => $notes, 'client_created_at' => $cca, 'hash' => $hash];
+            'mode' => $mode, 'method' => $method, 'amount' => $amount ?? Money::zero(), 'notes' => $notes, 'client_created_at' => $cca, 'hash' => $hash, 'expected_total' => $expected];
     }
 
     private function percentString(string $dbDecimal): string

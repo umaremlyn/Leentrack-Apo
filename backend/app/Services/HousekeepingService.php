@@ -29,6 +29,7 @@ final class HousekeepingService
         $del('rate_limits', 'DELETE FROM rate_limits WHERE window_start < ?', [$now->getTimestamp() - 86400]);
         $del('user_tokens', 'DELETE FROM user_tokens WHERE expires_at < ? OR used_at < ?', [$week, $week]);
         $del('auth_sessions', 'DELETE FROM auth_sessions WHERE (revoked_at IS NOT NULL AND revoked_at < ?) OR refresh_expires_at < ?', [$month, $month]);
+        $del('sync_operations', "DELETE FROM sync_operations WHERE status IN ('applied','discarded') AND processed_at < ?", [Clock::sql($now->modify('-90 days'))]);       // beyond the 60-day acceptance window nothing can replay these
         return $out;
     }
 }

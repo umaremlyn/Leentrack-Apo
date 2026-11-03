@@ -59,11 +59,11 @@ final class ExpenseService
     }
 
     /** @param array<string,mixed> $body @return array<string,mixed> */
-    public function create(TenantContext $t, array $body, Request $req): array
+    public function create(TenantContext $t, array $body, Request $req, ?string $presetId = null): array
     {
         $t->require('expenses.manage');
         $d = $this->parse($t, $body, true);
-        $id = Uuid::v4();
+        $id = $presetId ?? Uuid::v4();
         $this->repo->insert($d + ['id' => $id, 'business_id' => $t->businessId, 'user_id' => $t->userId]);
         $this->audit->log('expense.create', $req, $t->userId, $t->businessId, 'expense', $id, null, ['amount' => $d['amount'], 'date' => $d['expense_date'], 'description' => $d['description']]);
         return $this->view($this->find($t, $id));

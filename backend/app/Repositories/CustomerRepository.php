@@ -99,8 +99,8 @@ final class CustomerRepository
     /** Called only by sale/repayment code, inside its transaction, after lockCustomer(). total_spent = money RECEIVED (docs G-12). */
     public function adjustStats(string $bid, string $id, string $spentDelta, int $visitDelta, ?string $lastVisit): void
     {
-        $this->pdo->prepare('UPDATE customers SET total_spent = GREATEST(0, total_spent + ?), visit_count = GREATEST(0, visit_count + ?), last_visit = COALESCE(?, last_visit) WHERE business_id = ? AND id = ?')
-            ->execute([$spentDelta, $visitDelta, $lastVisit, $bid, $id]);
+        $this->pdo->prepare('UPDATE customers SET total_spent = GREATEST(0, total_spent + ?), visit_count = GREATEST(0, visit_count + ?), last_visit = CASE WHEN ? IS NULL THEN last_visit ELSE GREATEST(COALESCE(last_visit, ?), ?) END WHERE business_id = ? AND id = ?')
+            ->execute([$spentDelta, $visitDelta, $lastVisit, $lastVisit, $lastVisit, $bid, $id]);
     }
 
     // ---------------------------------------------------------------- groups

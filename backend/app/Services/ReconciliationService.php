@@ -72,6 +72,8 @@ final class ReconciliationService
                 "SELECT id FROM payments WHERE status = 'success' AND (paid_at IS NULL OR period_start IS NULL OR period_end IS NULL OR period_end <= period_start)"],
             'stale_pending_payments' => ['subscription payments left pending for more than 3 days (the customer never finished, or a confirmation was missed)',
                 "SELECT id FROM payments WHERE status = 'pending' AND created_at < (UTC_TIMESTAMP(3) - INTERVAL 3 DAY)"],
+            'sync_operations_waiting_for_a_person' => ['offline operations that conflict or were rejected and have waited more than 7 days for a manager (sales that happened but are not in the books)',
+                "SELECT client_operation_id FROM sync_operations WHERE status IN ('conflict','rejected') AND received_at < (UTC_TIMESTAMP(3) - INTERVAL 7 DAY)"],
             'accounts_pending_deletion_overdue' => ['accounts whose deletion date passed more than 2 days ago (is the purge job running?)',
                 "SELECT id FROM users WHERE status = 'pending_deletion' AND anonymised_at IS NULL AND deletion_scheduled_at < (UTC_TIMESTAMP(3) - INTERVAL 2 DAY)"],
         ];

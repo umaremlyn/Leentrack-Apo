@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 use LeenTrack\Core\{Lazy, Router};
-use LeenTrack\Http\Controllers\{AdminController, AuthController, BusinessController, CatalogController, CustomerController, FinanceController, HealthController, PurchaseController, TransferController, ReportController, BillingController, SaleController, LocationController, MeController, StaffController};
+use LeenTrack\Http\Controllers\{AdminController, AuthController, BusinessController, CatalogController, CustomerController, FinanceController, HealthController, PurchaseController, TransferController, ReportController, BillingController, SyncController, SaleController, LocationController, MeController, StaffController};
 use LeenTrack\Services\Container;
 
 /**
@@ -23,6 +23,7 @@ return static function (Router $r, Container $c): void {
     $tr = new Lazy(fn () => new TransferController($c->transfers()));
     $rep = new Lazy(fn () => new ReportController($c->reports()));
     $bill = new Lazy(fn () => new BillingController($c->billing()));
+    $syn = new Lazy(fn () => new SyncController($c->sync(), $c->syncPull()));
     $fin = new Lazy(fn () => new FinanceController($c->expenses(), $c->profit(), $c->dashboard()));
     $admin = new Lazy(fn () => new AdminController($c->admin(), $c->jobs(), $c->app()->config));
 
@@ -175,6 +176,15 @@ return static function (Router $r, Container $c): void {
     $r->post('/billing/checkout', [$bill, 'checkout'], ['auth', 'tenant', 'throttle:20,3600']);
     $r->post('/billing/verify', [$bill, 'verify'], ['auth', 'tenant', 'throttle:60,3600']);
     $r->post('/webhooks/paystack', [$bill, 'paystackWebhook'], ['throttle:600,60'], true);
+
+    // --- offline sync ---
+    $r->get('/sync/info', [$syn, 'info'], ['auth', 'tenant']);
+    $r->post('/sync/push', [$syn, 'push'], ['auth', 'tenant', 'throttle:600,3600']);
+    $r->post('/sync/pull', [$syn, 'pull'], ['auth', 'tenant', 'throttle:1200,3600']);
+    $r->get('/sync/operations', [$syn, 'operations'], ['auth', 'tenant']);
+    $r->post('/sync/operations/{id}/retry', [$syn, 'retry'], ['auth', 'tenant']);
+    $r->post('/sync/operations/{id}/accept-prices', [$syn, 'acceptPrices'], ['auth', 'tenant']);
+    $r->post('/sync/operations/{id}/discard', [$syn, 'discard'], ['auth', 'tenant']);
 
     // --- platform administration ---
     $pa = ['auth', 'platform_admin'];

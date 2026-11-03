@@ -62,6 +62,17 @@ Rule applied to every gap: if the production product does something and the rebu
 | G-50 | ✅ | The report row cap is configurable (`REPORT_MAX_ROWS`) and now tested. |
 | G-51 | 🟡 | Profit/outlets reports require `profit.read`; today equal to `reports.read` for all roles. |
 
+New in Phase 4 (offline sync):
+
+| ID | Status | Note |
+|---|---|---|
+| G-78 | 🟡 | **A sale that cannot be applied is never forced in.** If two devices sell the last unit, the second sale waits as `conflict / insufficient_stock` for a manager (restock, then retry, or discard). The alternative — recording it and letting stock go negative — would break the stock invariants the reports and reconciliation rely on. The goods did leave the shop, so until the manager acts the books are short by that sale (reconciliation flags it after 7 days). Say if you prefer "record anyway and flag negative stock". |
+| G-79 | 🟡 | Offline operations in version 1: sale checkout, credit repayment, new customer, new expense, stock *change*. Sale edits/voids, purchases, transfers, stock *counts*, product edits and billing stay online-only (docs/14 §8). |
+| G-80 | 🟡 | A device that quotes prices offline can send `expected_total`; if today's price differs the sale is held as `price_changed` until a manager accepts the new price. Without `expected_total` the sale is simply recorded at server prices. Which one the app uses is a Phase 5 product decision. |
+| G-81 | 🟡 | The pull cursor protects against transactions that commit late with a 10-second overlap. A change committed more than 10 seconds late (a stalled request) could still be missed until the next full resync; the device should do a full resync (no cursors) occasionally, e.g. daily. |
+| G-82 | 🟡 | Provisional offline receipts carry no server receipt number until the sale syncs. |
+| G-83 | ⏳ | Not built: push notification when a conflict is resolved (devices poll `GET /sync/operations`); merging two devices' edits to the same existing record (only creation is offline). |
+
 New in Phase 3l (settings, jobs, reconciliation):
 
 | ID | Status | Note |

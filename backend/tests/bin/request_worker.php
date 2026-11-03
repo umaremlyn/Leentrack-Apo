@@ -36,4 +36,5 @@ foreach (json_decode($reqs, true) as $r) {
     $res = $kernel->handle($req);
     $j = json_decode($res->body, true);
     echo $res->status, ' ', ($j['meta']['replayed'] ?? false) ? 1 : 0, ' ', $j['data']['repayment']['id'] ?? $j['data']['id'] ?? ($j['error']['code'] ?? '?'), "\n";
+    if ($r['dump'] ?? false) { echo 'BODY ', base64_encode($res->body), "\n"; }      // tests that need the whole answer (sync results)
 }

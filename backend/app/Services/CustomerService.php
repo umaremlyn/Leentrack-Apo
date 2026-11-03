@@ -49,12 +49,12 @@ final class CustomerService
     }
 
     /** @param array<string,mixed> $body @return array<string,mixed> */
-    public function create(TenantContext $t, array $body, Request $req): array
+    public function create(TenantContext $t, array $body, Request $req, ?string $presetId = null): array
     {
         $t->require('customers.create');
         $d = $this->parse($t, $body, true);
         $t->requireWithinLimit('customers', $this->repo->countLive($t->businessId));
-        $id = Uuid::v4();
+        $id = $presetId ?? Uuid::v4();           // a preset id is used only by the offline sync engine (the device names its own new records)
         $this->repo->insert($d + ['id' => $id, 'business_id' => $t->businessId]);
         $this->audit->log('customer.create', $req, $t->userId, $t->businessId, 'customer', $id, null, ['name' => $d['name']]);
         return $this->view($this->find($t, $id));

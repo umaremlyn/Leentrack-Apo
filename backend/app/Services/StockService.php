@@ -50,7 +50,7 @@ final class StockService
     }
 
     /** @param array<string,mixed> $body @return array<string,mixed> */
-    public function adjust(TenantContext $t, array $body, Request $req): array
+    public function adjust(TenantContext $t, array $body, Request $req, ?string $syncOpId = null): array
     {
         $t->require('stock.adjust');
         $v = new Validator($body);
@@ -69,9 +69,14 @@ final class StockService
         if (!$t->canAccessOutlet((string) $locationId) || !$this->repo->locationBelongs($t->businessId, (string) $locationId)) {
             throw ApiException::notFound('Outlet not found.');
         }
-        $result = Db::transaction($this->pdo, function () use ($t, $productId, $locationId, $reason, $note, $delta, $newQty) {
+        $result = Db::transaction($this->pdo, function () use ($t, $productId, $locationId, $reason, $note, $delta, $newQty, $syncOpId) {
             $p = $this->repo->lockProduct($t->businessId, (string) $productId) ?? throw ApiException::notFound('Product not found.');
             if ($p['archived_at'] !== null) { throw ApiException::notFound('Product not found.'); }
+            if ($syncOpId !== null) {                       // a retried offline adjustment: the product lock above serialises duplicates, so this check is exact
+                $st = $this->pdo->prepare("SELECT delta, quantity_after FROM stock_movements WHERE business_id = ? AND product_id = ? AND ref_type = 'sync' AND ref_id = ?");
+                $st->execute([$t->businessId, (string) $productId, $syncOpId]);
+                if ($row = $st->fetch()) { return ['product_id' => $productId, 'location_id' => $locationId, 'delta' => (int) $row['delta'], 'quantity_after' => (int) $row['quantity_after'], 'before' => null, 'replayed' => true]; }
+            }
             $current = $this->repo->lockLevel($t->businessId, (string) $productId, (string) $locationId);
             $d = $delta ?? ((int) $newQty - $current);
             if ($d === 0) { throw ApiException::validation(['delta' => ['This would not change the stock.']]); }
@@ -79,10 +84,10 @@ final class StockService
             if (($sign === 1 && $d < 0) || ($sign === -1 && $d > 0)) {
                 throw ApiException::validation(['reason' => [$sign === 1 ? 'This reason can only add stock.' : 'This reason can only remove stock.']]);
             }
-            $after = $this->applyDelta($t->businessId, (string) $productId, (string) $locationId, $d, (string) $reason, 'adjustment', null, $note, $t->userId);
+            $after = $this->applyDelta($t->businessId, (string) $productId, (string) $locationId, $d, (string) $reason, $syncOpId !== null ? 'sync' : 'adjustment', $syncOpId, $note, $t->userId);
             return ['product_id' => $productId, 'location_id' => $locationId, 'delta' => $d, 'quantity_after' => $after, 'before' => $current];
         });
-        $this->audit->log('stock.adjust', $req, $t->userId, $t->businessId, 'product', (string) $productId, ['quantity' => $result['before']], ['quantity' => $result['quantity_after'], 'reason' => $reason, 'location_id' => $locationId]);
+        if ($result['before'] !== null) { $this->audit->log('stock.adjust', $req, $t->userId, $t->businessId, 'product', (string) $productId, ['quantity' => $result['before']], ['quantity' => $result['quantity_after'], 'reason' => $reason, 'location_id' => $locationId]); }
         unset($result['before']);
         return $result;
     }
