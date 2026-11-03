@@ -315,7 +315,7 @@ final class AccountTest extends ApiTestCase
     public function testEveryTableWithABusinessIdIsCoveredByThePurge(): void
     {
         $tables = $this->pdo->query("SELECT DISTINCT TABLE_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND COLUMN_NAME = 'business_id'")->fetchAll(\PDO::FETCH_COLUMN);
-        $this->assertSame([], array_values(array_diff($tables, AccountService::PURGE_ORDER)), 'a new business-scoped table must be added to AccountService::PURGE_ORDER (and, if personal data, to the export)');
+        $this->assertSame([], array_values(array_diff($tables, AccountService::PURGE_ORDER, AccountService::RETAINED)), 'a new business-scoped table must be added to AccountService::PURGE_ORDER (or RETAINED with a reason) and to the export');
         $this->assertSame([], array_values(array_diff(array_diff($tables, ['business_branding', 'document_sequences', 'loyalty_settings', 'audit_logs', 'business_members', 'locations']), array_column(AccountService::EXPORT_SECTIONS, 0))), 'a new business-scoped table must be exportable');
         foreach (AccountService::PURGE_ORDER as $t) { $this->assertContains($t, array_merge($tables, ['member_outlets', 'purchase_receipt_items']), "unknown table $t"); }
     }

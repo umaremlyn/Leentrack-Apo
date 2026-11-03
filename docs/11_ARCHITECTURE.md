@@ -158,3 +158,14 @@ MySQL-backed fixed window (`rate_limits`), usable on shared hosting. Applied per
   * D-72 A filter naming a foreign or non-existent outlet is 404 everywhere (never an empty 200).
   * D-73 Supplier payments are bounded by received-and-unpaid value per order, row-locked with the order, idempotent, immutable; they are not expenses.
   * D-74 PDF documents are produced without any library (Courier, A4, paginated); SMTP without any library (sockets).
+
+## Phase 3j additions (billing)
+* **Schema:** `0013_billing` — `payments` (server-created, amount/plan/cycle fixed at creation; `business_id` FK `ON DELETE SET NULL` so the accounting record survives a deleted business), `webhook_events` (hash of the raw body, never the body).
+* **Code:** `Billing\PriceTable` (exact integer port of the source prices; 48 golden cases), `Billing\PaymentGateway` + `PaystackGateway` (curl, https only), `BillingService`, `BillingRepository`, `BillingController`; `cron expire-plans`.
+* **Decisions:**
+  * D-75 **Closes audit S-04 and S-06.** A plan is granted only when a payment row the SERVER created is confirmed — by us asking Paystack (`POST /billing/verify`) or by a correctly signed webhook — for exactly that amount and currency. Request bodies and webhook metadata can name neither plan, amount, business nor expiry.
+  * D-76 One idempotent, row-locked `settle()` serves both paths; a second confirmation of a settled payment changes nothing and sends nothing (tested with 8 concurrent deliveries).
+  * D-77 Webhook: signature over the RAW body (HMAC-SHA512, constant time); distinct deliveries recorded by body hash, identical redeliveries acknowledged; unknown references recorded and ignored; always 200 once the signature is valid (no retry storms), 401 on a bad signature, 503 if unconfigured.
+  * D-78 Provider mismatch (amount, currency, reference) marks the payment `failed` with a reason and audits it; no plan is granted.
+  * D-79 Renewal of the running plan extends from its expiry; any other purchase starts now; downgrades are refused while a dearer plan runs (G-58/G-59).
+  * D-80 Payment records are retained pseudonymised after account deletion and expire after `PAYMENT_RETENTION_YEARS` (G-54).

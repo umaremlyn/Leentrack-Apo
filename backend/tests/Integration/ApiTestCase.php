@@ -15,6 +15,7 @@ use LeenTrack\Services\Container;
 abstract class ApiTestCase extends DbTestCase
 {
     protected Kernel $kernel;
+    protected Container $container;
     protected App $app;
     protected string $ip = '203.0.113.10';
     public const PW = 'Correct-Horse-9';
@@ -32,9 +33,9 @@ abstract class ApiTestCase extends DbTestCase
         ], $overrides);
         $this->app = new App($cfg);
         $this->app->setPdo($this->pdo);
-        $container = new Container($this->app);
-        $container->setMailer(new FileMailer());
-        $this->kernel = new Kernel($this->app, $container);
+        $this->container = new Container($this->app);
+        $this->container->setMailer(new FileMailer());
+        $this->kernel = new Kernel($this->app, $this->container);
     }
 
     protected function setUp(): void

@@ -173,3 +173,7 @@ Create body: `{supplier_id?, outlet_id?, notes?, items:[{product_id?|product_nam
 * **Documents:** `GET /sales/{id}/document?format=pdf` → `application/pdf` attachment.
 * **Stock:** adjustment reason `supplier_return`.
 * **Config:** `MAIL_DRIVER=smtp|native|file`, `SMTP_*`, `AVATAR_DIR`, `REPORT_MAX_ROWS`; cron `php bin/cron.php purge-accounts`.
+
+
+## Phase 3j — implemented (billing)
+`GET /billing` (current plan, effective plan, days left, last payment) · `GET /billing/plans?currency=` (server-priced, with limits) · `GET /billing/history` · `POST /billing/checkout {plan, cycle, currency?}` → 201 `{payment, authorization_url, access_code, note}` (open the URL or use the access code with the provider's SDK) · `POST /billing/verify {reference}` → asks the provider; returns the payment and the resulting plan (safe to call repeatedly) · public `POST /webhooks/paystack` (signature header `x-paystack-signature`). All except the webhook need the owner (`billing.manage`). Errors: `billing_not_configured` 503, `downgrade_not_allowed` 409, `too_many_pending` 429, `payment_provider_error`/`payment_provider_unreachable` 502. Payment statuses: `pending`, `success`, `failed` (with `failure_reason`), `abandoned`, `refunded`. Config: `PAYSTACK_SECRET_KEY`, `PAYSTACK_CALLBACK_URL`, `PAYMENT_RETENTION_YEARS`; cron `php bin/cron.php expire-plans`.

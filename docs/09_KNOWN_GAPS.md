@@ -20,7 +20,7 @@ Rule applied to every gap: if the production product does something and the rebu
 | G-08 | 🟡 | Cashiers see Sales and Customers only (as production). |
 | G-09 | ❓ | Flutterwave does not exist in production. Build only if you confirm it is wanted and give sandbox keys. |
 | G-10 | ❓ | SMS verification needs a gateway choice (Termii/Twilio…). |
-| G-11 | 🟡 | Over-limit businesses keep what they have; new items are blocked. |
+| G-11 | 🟡 | Over-limit businesses keep what they have; new items are blocked. **Payment-failure grace period: none, exactly like production** (access stops at expiry; the earlier "3-day grace" default was dropped). Say if you want one. |
 | G-12 | 🟡 | `total_spent` = money actually received. |
 | G-13 | ✅/❓ | Retention is now implemented: 14-day grace, then the purge job deletes the owner's business data and anonymises the person (Phase 3i). The legal period for payment records (7 years default) still needs counsel and applies when billing exists (3j). |
 | G-14 | 🟡 | Web migration lives on a branch of `Track`, never auto-deployed. |
@@ -62,13 +62,25 @@ Rule applied to every gap: if the production product does something and the rebu
 | G-50 | ✅ | The report row cap is configurable (`REPORT_MAX_ROWS`) and now tested. |
 | G-51 | 🟡 | Profit/outlets reports require `profit.read`; today equal to `reports.read` for all roles. |
 
+New in Phase 3j (billing):
+
+| ID | Status | Note |
+|---|---|---|
+| G-58 | 🟡 | Buying a **different** plan starts it today; the unused time of the previous plan is not credited (production reset the expiry the same way). Renewing the **same** plan adds time after the current expiry (production lost the remaining days). |
+| G-59 | 🟡 | You cannot buy a cheaper plan while a dearer one is running (409 `downgrade_not_allowed`); production let you, silently wasting the dearer plan. |
+| G-60 | ❓ | **Nothing has been run against the real Paystack.** The gateway is tested against a local stand-in server and recorded-shape fixtures. Needs a Paystack **test** secret key and your webhook URL registered, then one end-to-end test payment. |
+| G-61 | 🟡 | Subscriptions are one-off charges renewed by the owner (as production: its `subscription.disable` handler had nothing to disable). No automatic card recurring billing and no "payment due" reminders. |
+| G-62 | 🟡 | A refund notice marks the payment `refunded` but does **not** remove access; that is a human decision (platform admin tools arrive in 3k). |
+| G-63 | 🟡 | Flutterwave remains unbuilt (G-09); the gateway interface is ready for it. |
+| G-64 | ❓ | The webhook endpoint is public by design (authenticated by the provider's HMAC-SHA512 signature). Paystack also publishes source IP addresses; an IP allow-list at the web server would add a second layer but is host-specific. |
+
 New in Phase 3i, recorded here so nothing is silent:
 
 | ID | Status | Note |
 |---|---|---|
 | G-52 | 🟡 | There is no **ownership transfer**. A business owner who still has team members cannot request account deletion (409 `owns_business_with_staff`); they must remove the team first. |
 | G-53 | ❓ | The nightly/`purge-accounts` cron job must be scheduled on the host (`php bin/cron.php purge-accounts`, daily). Deleted accounts stay "pending" until it runs. |
-| G-54 | 🟡 | Subscription payment records (billing, Phase 3j) are to be kept pseudonymised for tax purposes when they exist; nothing is retained today because no such table exists yet. |
+| G-54 | ✅/❓ | Payment records are now kept when a business is deleted, pseudonymised (business and payer removed), and deleted by the expiry job after `PAYMENT_RETENTION_YEARS` (default 7). The legal period needs counsel (G-13). |
 | G-55 | 🟡 | `GET /me/export` is personal data only; business records are exported by the owner section by section (`GET /businesses/{id}/export`, 1,000 rows per page) to keep memory flat on shared hosting. |
 | G-56 | 🟡 | Staff outlet restriction (`PUT /staff/{id}/outlets`) needs the paid `locations` feature, like multi-outlet itself. Owners are never restricted. |
 | G-57 | 🟡 | PDF documents exist for sales receipts/invoices; payment receipts (repayments) are still JSON only. |

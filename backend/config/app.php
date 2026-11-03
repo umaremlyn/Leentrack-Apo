@@ -17,6 +17,12 @@ return [
     'rate_limit_enabled' => Env::bool('RATE_LIMIT_ENABLED', true),
     'enforce_sales_limit' => Env::bool('ENFORCE_SALES_LIMIT', false),   // the source only showed a banner; blocking the till is an owner decision (G-29)
     'web_url' => rtrim((string) Env::get('WEB_URL', ''), '/'),
+    'paystack' => [
+        'secret' => Env::get('PAYSTACK_SECRET_KEY', ''),                      // server-side secret (sk_…); the browser never sees it
+        'base_url' => Env::get('PAYSTACK_BASE_URL', 'https://api.paystack.co'),
+        'callback_url' => Env::get('PAYSTACK_CALLBACK_URL', ''),              // where Paystack sends the customer back, e.g. https://app.example.com/billing/callback
+    ],
+    'payment_retention_years' => Env::int('PAYMENT_RETENTION_YEARS', 7),
     'report_max_rows' => Env::int('REPORT_MAX_ROWS', 50000),             // largest report (rows) built in one request; protects shared-hosting memory
     'mail_driver' => Env::get('MAIL_DRIVER', ''),                       // smtp | native | file ('' = native in production, file otherwise)
     'smtp' => [

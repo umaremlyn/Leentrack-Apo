@@ -19,7 +19,7 @@ use LeenTrack\Services\Container;
 $dbc = ['host' => '', 'port' => 0, 'name' => getenv('TEST_DB_NAME'), 'user' => getenv('TEST_DB_USER'), 'pass' => getenv('TEST_DB_PASS'), 'socket' => getenv('TEST_DB_SOCKET')];
 $app = new App([
     'env' => 'testing', 'debug' => false, 'url' => '', 'version' => 't', 'api_prefix' => '/api/v1', 'log_dir' => sys_get_temp_dir() . '/lt-worker-logs', 'log_level' => 'error',
-    'web_url' => 'https://web.test', 'mail_from' => 'x@test', 'cors_origins' => [], 'trusted_proxies' => [], 'rate_limit_enabled' => false, 'enforce_sales_limit' => false,
+    'web_url' => 'https://web.test', 'mail_from' => 'x@test', 'cors_origins' => [], 'trusted_proxies' => [], 'rate_limit_enabled' => false, 'enforce_sales_limit' => false, 'paystack' => ['secret' => (string) getenv('TEST_PAYSTACK_SECRET'), 'base_url' => 'https://api.paystack.co', 'callback_url' => ''],
     'auth' => ['access_ttl' => 900, 'refresh_ttl' => 2592000, 'require_email_verification' => true, 'invite_ttl' => 604800, 'reset_ttl' => 3600, 'verify_ttl' => 172800],
     'db' => $dbc,
 ]);
@@ -29,8 +29,10 @@ $c->setMailer(new FileMailer());
 $kernel = new Kernel($app, $c);
 while (microtime(true) < (float) $startAt) { usleep(200); }
 foreach (json_decode($reqs, true) as $r) {
-    $req = Request::fromGlobals(['REQUEST_METHOD' => $r['method'], 'REQUEST_URI' => '/api/v1' . $r['path'], 'REMOTE_ADDR' => '203.0.113.88', 'CONTENT_TYPE' => 'application/json',
-        'HTTP_AUTHORIZATION' => "Bearer $token", 'HTTP_X_BUSINESS_ID' => $bid], isset($r['body']) ? json_encode($r['body']) : '');
+    $server = ['REQUEST_METHOD' => $r['method'], 'REQUEST_URI' => '/api/v1' . $r['path'], 'REMOTE_ADDR' => '203.0.113.88', 'CONTENT_TYPE' => 'application/json',
+        'HTTP_AUTHORIZATION' => "Bearer $token", 'HTTP_X_BUSINESS_ID' => $bid];
+    foreach ($r['headers'] ?? [] as $hk => $hv) { $server['HTTP_' . strtoupper(str_replace('-', '_', $hk))] = $hv; }
+    $req = Request::fromGlobals($server, $r['raw'] ?? (isset($r['body']) ? json_encode($r['body']) : ''));
     $res = $kernel->handle($req);
     $j = json_decode($res->body, true);
     echo $res->status, ' ', ($j['meta']['replayed'] ?? false) ? 1 : 0, ' ', $j['data']['repayment']['id'] ?? $j['data']['id'] ?? ($j['error']['code'] ?? '?'), "\n";

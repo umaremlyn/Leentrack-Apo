@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 use LeenTrack\Core\{Lazy, Router};
-use LeenTrack\Http\Controllers\{AdminController, AuthController, BusinessController, CatalogController, CustomerController, FinanceController, HealthController, PurchaseController, TransferController, ReportController, SaleController, LocationController, MeController, StaffController};
+use LeenTrack\Http\Controllers\{AdminController, AuthController, BusinessController, CatalogController, CustomerController, FinanceController, HealthController, PurchaseController, TransferController, ReportController, BillingController, SaleController, LocationController, MeController, StaffController};
 use LeenTrack\Services\Container;
 
 /**
@@ -22,6 +22,7 @@ return static function (Router $r, Container $c): void {
     $po = new Lazy(fn () => new PurchaseController($c->purchases()));
     $tr = new Lazy(fn () => new TransferController($c->transfers()));
     $rep = new Lazy(fn () => new ReportController($c->reports()));
+    $bill = new Lazy(fn () => new BillingController($c->billing()));
     $fin = new Lazy(fn () => new FinanceController($c->expenses(), $c->profit(), $c->dashboard()));
     $admin = new Lazy(fn () => new AdminController($c->app()));
 
@@ -162,6 +163,14 @@ return static function (Router $r, Container $c): void {
     // --- reports ---
     $r->get('/reports', [$rep, 'index'], ['auth', 'tenant']);
     $r->get('/reports/{name}', [$rep, 'show'], ['auth', 'tenant']);
+
+    // --- billing ---
+    $r->get('/billing', [$bill, 'summary'], ['auth', 'tenant']);
+    $r->get('/billing/plans', [$bill, 'plans'], ['auth', 'tenant']);
+    $r->get('/billing/history', [$bill, 'history'], ['auth', 'tenant']);
+    $r->post('/billing/checkout', [$bill, 'checkout'], ['auth', 'tenant', 'throttle:20,3600']);
+    $r->post('/billing/verify', [$bill, 'verify'], ['auth', 'tenant', 'throttle:60,3600']);
+    $r->post('/webhooks/paystack', [$bill, 'paystackWebhook'], ['throttle:600,60'], true);
 
     // --- platform administration ---
     $r->get('/admin/stats', [$admin, 'stats'], ['auth', 'platform_admin']);

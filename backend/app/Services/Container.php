@@ -9,6 +9,9 @@ use LeenTrack\Mail\FileMailer;
 use LeenTrack\Mail\Mailer;
 use LeenTrack\Mail\NativeMailer;
 use LeenTrack\Mail\SmtpMailer;
+use LeenTrack\Billing\PaymentGateway;
+use LeenTrack\Billing\PaystackGateway;
+use LeenTrack\Repositories\BillingRepository;
 use LeenTrack\Repositories\CatalogRepository;
 use LeenTrack\Repositories\CustomerRepository;
 use LeenTrack\Repositories\ExpenseRepository;
@@ -110,6 +113,18 @@ final class Container
     public function transfers(): TransferService { return $this->once('transfers', fn () => new TransferService($this->app->pdo(), new TransferRepository($this->app->pdo()), $this->catalog(), $this->stock(), $this->audit())); }
 
     public function account(): AccountService { return $this->once('account', fn () => new AccountService($this->app->pdo(), $this->users(), $this->sessions(), $this->hasher(), $this->mailer(), $this->audit(), $this->limiter(), (bool) $this->app->config['rate_limit_enabled'], (string) ($this->app->config['avatar_dir'] ?? ''))); }
+    private ?PaymentGateway $gateway = null;
+    public function setGateway(PaymentGateway $g): void { $this->gateway = $g; }
+    public function gateway(): PaymentGateway
+    {
+        $c = $this->app->config['paystack'] ?? ['secret' => '', 'base_url' => 'https://api.paystack.co'];
+        return $this->gateway ??= new PaystackGateway((string) $c['secret'], (string) $c['base_url'], $this->app->logger());
+    }
+    public function billing(): BillingService
+    {
+        return $this->once('billing', fn () => new BillingService($this->app->pdo(), new BillingRepository($this->app->pdo()), $this->gateway(), $this->mailer(), $this->audit(),
+            (string) ($this->app->config['paystack']['callback_url'] ?? ''), (int) ($this->app->config['payment_retention_years'] ?? 7)));
+    }
     public function reports(): ReportService { return $this->once('reports', fn () => new ReportService($this->reportRepo(), $this->saleRepo(), $this->catalog(), $this->profit(), $this->expenses(), $this->credit())); }
 
     public function locations(): LocationService { return $this->once('loc', fn () => new LocationService($this->tenants(), $this->audit())); }

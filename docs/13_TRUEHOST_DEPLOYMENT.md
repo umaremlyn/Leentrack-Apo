@@ -61,3 +61,10 @@ Upload new code to a fresh directory, `composer install --no-dev`, run `php bin/
 * **Profile pictures:** `AVATAR_DIR` (default `backend/storage/avatars`) must be writable by PHP and **outside the web root**.
 * **Reports:** `REPORT_MAX_ROWS` (default 50000) bounds memory for the largest report; lower it on small plans.
 * **Not yet verified on a real host:** the STARTTLS/TLS handshake of the SMTP client, and that the cPanel PHP has `iconv`/`mbstring` (the PDF writer uses `mbstring`).
+
+
+## Phase 3j settings (billing)
+1. Set `PAYSTACK_SECRET_KEY` (server only) and `PAYSTACK_CALLBACK_URL` (the web/app page that calls `POST /billing/verify`).
+2. In the Paystack dashboard register the webhook URL `https://YOUR-API-HOST/api/v1/webhooks/paystack`. Use **test** keys first and make one test payment end to end (docs G-60).
+3. Schedule `php bin/cron.php expire-plans` daily (it also removes payment records past their retention period). Without it, plans still stop at expiry (access is checked live) but the stored plan stays "growth" until it runs.
+4. Outbound HTTPS from the host to `api.paystack.co` must be allowed (see G-16).

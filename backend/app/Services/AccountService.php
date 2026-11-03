@@ -40,6 +40,8 @@ final class AccountService
         'customers', 'customer_groups', 'loyalty_settings', 'business_branding', 'document_sequences',
         'member_outlets', 'business_members', 'audit_logs', 'locations',
     ];
+    /** Business-scoped tables that are deliberately KEPT when a business is deleted. `payments` stays (pseudonymised: business_id → NULL by the foreign key, user_id blanked here) for tax/accounting; the housekeeping job deletes it after PAYMENT_RETENTION_YEARS. */
+    public const RETAINED = ['payments'];
     /** Tables reached through a parent instead of their own business_id. */
     private const VIA_PARENT = [
         'purchase_receipt_items' => 'DELETE x FROM purchase_receipt_items x JOIN purchase_receipts r ON r.id = x.receipt_id WHERE r.business_id = ?',
@@ -55,7 +57,7 @@ final class AccountService
         'expense_categories' => ['expense_categories', 'id', []], 'expenses' => ['expenses', 'id', []],
         'suppliers' => ['suppliers', 'id', []], 'purchase_orders' => ['purchase_orders', 'id', []], 'purchase_order_items' => ['purchase_order_items', 'id', []],
         'transfers' => ['transfers', 'id', []], 'transfer_items' => ['transfer_items', 'id', []],
-        'purchase_receipts' => ['purchase_receipts', 'id', []], 'supplier_payments' => ['supplier_payments', 'id', []],
+        'purchase_receipts' => ['purchase_receipts', 'id', []], 'supplier_payments' => ['supplier_payments', 'id', []], 'payments' => ['payments', 'created_at, id', []],
         'purchase_receipt_items' => ['purchase_receipt_items', 'receipt_id, item_id', [], 'x.* FROM purchase_receipt_items x JOIN purchase_receipts r ON r.id = x.receipt_id WHERE r.business_id = ?'],
         'member_outlets' => ['member_outlets', 'member_id, location_id', [], 'x.* FROM member_outlets x JOIN business_members m ON m.id = x.member_id WHERE m.business_id = ?'],
     ];
@@ -210,6 +212,7 @@ final class AccountService
         $biz = $this->pdo->prepare('SELECT id FROM businesses WHERE owner_user_id = ?');
         $biz->execute([$uid]);
         $ids = array_map('strval', $biz->fetchAll(PDO::FETCH_COLUMN));
+        $this->pdo->prepare('UPDATE payments SET user_id = NULL WHERE user_id = ?')->execute([$uid]);       // keep the payment record, drop the person
         foreach ($ids as $bid) {
             $others = $this->pdo->prepare("SELECT COUNT(*) FROM business_members WHERE business_id = ? AND role <> 'owner' AND status IN ('active','invited')");
             $others->execute([$bid]);

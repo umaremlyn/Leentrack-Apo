@@ -1,6 +1,6 @@
 # LeenTrack Rebuild — Project Status
 
-_Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current phase: **Phase 3 — Business operations: 3a ✅ · 3b ✅ · 3c ✅ · 3d ✅ · 3e ✅ · 3f ✅ · 3g ✅ · 3h ✅ · 3i (account lifecycle, staff outlets) COMPLETE + gap sweep; 3j (billing) next**_
+_Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current phase: **Phase 3 — Business operations: 3a ✅ · 3b ✅ · 3c ✅ · 3d ✅ · 3e ✅ · 3f ✅ · 3g ✅ · 3h ✅ · 3i ✅ · 3j (billing) COMPLETE; 3k (platform admin) next**_
 
 ## Ground rules in force
 * Production (Vercel + Supabase) is **never touched**. `umaremlyn/Track` is read-only to this project (verified unmodified).
@@ -14,8 +14,17 @@ _Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current
 | 0 Source audit | ✅ docs 01–10 |
 | 1 Foundation | ✅ backend skeleton + migrator + rate limiter + Money; Flutter scaffold + adaptive shell + API client; docs 11–12 |
 | 2 Database & core (auth, tenancy, policies) | ✅ identity + tenancy + authorization + plan guard + audit; deployment guide drafted |
-| 3 Business operations | 🔶 3a catalogue & stock ✅ · 3b customers/groups/loyalty ✅ · 3c POS/sales/documents ✅ · 3d credit ✅ · 3e expenses/profit/dashboard ✅ · 3f suppliers/purchases ✅ · 3g transfers ✅ · 3h reports ✅ · 3i account lifecycle + gap sweep ✅ · 3j billing ⏳ next · 3h reports · 3i staff extras/account lifecycle · 3j billing · 3k admin · 3l settings/branding/cron |
+| 3 Business operations | 🔶 3a catalogue & stock ✅ · 3b customers/groups/loyalty ✅ · 3c POS/sales/documents ✅ · 3d credit ✅ · 3e expenses/profit/dashboard ✅ · 3f suppliers/purchases ✅ · 3g transfers ✅ · 3h reports ✅ · 3i account lifecycle + gap sweep ✅ · 3j billing ✅ · 3k platform admin ⏳ next · 3h reports · 3i staff extras/account lifecycle · 3j billing · 3k admin · 3l settings/branding/cron |
 | 4–10 | ⏳ not started |
+
+## Session 13 report (Phase 3j — billing)
+**Completed:** migration `0013_billing` (`payments`, `webhook_events`); `Billing\PriceTable` (exact integer port of the production prices), `PaymentGateway` interface + `PaystackGateway` (curl, https only), `BillingService`, `BillingRepository`, `BillingController`; routes `GET /billing`, `/billing/plans`, `/billing/history`, `POST /billing/checkout`, `/billing/verify`, public `POST /webhooks/paystack`; `cron expire-plans`; payment records kept pseudonymised after account deletion and deleted after the retention period. **Closes audit S-04 and S-06:** a plan is granted only for a payment the SERVER created, confirmed by Paystack (our own verify call or a signed webhook) for exactly that amount and currency; neither a request nor webhook metadata can name a plan, amount, business or expiry.
+**Tests executed (actual):** full suite against MySQL 8.4.6 → **OK, 294 tests, 56,164 assertions**. New: `BillingGoldenTest` (all 48 prices/cycle lengths equal the ORIGINAL billing page and webhook — the golden script reads the tables out of the source text), `PaystackGatewayTest` (7, against a local stand-in HTTP server), `BillingTest` (17, including 8 concurrent webhook deliveries → exactly one activation).
+**Mutation checks (20):** all 20 caught on the first run (amount/currency/reference/status checks, signature, duplicate deliveries, settled-twice, cross-business verify, permission, renewal, downgrade, expiry job, unknown references, pending cap, row lock, payer pseudonymisation, refund, discount, plain-http, signature comparison).
+**Test-writing errors fixed:** my own date arithmetic (92 days from 1 March is 1 June, not 31 May), tokens that expire when the test clock jumps (re-login), and a worker process that ran on the real clock (assertion made relative).
+**Behaviour that differs from production (all deliberate, in docs/09 as G-58…G-64):** a renewal adds time after the current expiry (production threw away the remaining days); a cheaper plan cannot be bought while a dearer one runs; no payment-failure grace (as production); a refund notice is recorded but does not remove access; no automatic recurring card billing (production had none either).
+**Not done / not verified:** **nothing was run against the real Paystack** (G-60) — I need a Paystack *test* secret key and your webhook URL registered, then one real end-to-end test payment; Flutterwave (G-09); clients do not use these endpoints yet; no real data; PHP 8.3.6.
+**Current phase:** 3 (3a–3j done). **Next task:** Phase 3k — platform administration (CLI-created admins only): list/search businesses and users, change a business's plan/status with an audit reason, suspend/unsuspend, handle refunds (decide access), view audit log, broadcast notices, platform stats; every action audited; step-up re-authentication for destructive actions; strict separation from tenant endpoints.
 
 ## Session 12 report (Phase 3i — account lifecycle and staff outlets, plus the gap sweep you asked for)
 **Completed (3i):** `PUT /staff/{id}/outlets` (restrict a member to outlets, empty list = all); `must_change_password` soft enforcement for weak migrated passwords (G-21); `GET /me/export` and owner-only paged `GET /businesses/{id}/export`; account deletion with a 14-day grace (`POST /me/deletion`, `POST /auth/cancel-deletion`) and the `cron purge-accounts` job that deletes the owner's business data and anonymises the user; profile-picture upload/read/remove (`/me/avatar`). Migrations `0011_account_lifecycle`, `0012_supplier_payments`.
@@ -224,4 +233,4 @@ _Last updated: 2026-11-02 · Branch: `claude/laughing-hypatia-gejtzf` · Current
 G-01 schema-only dump · G-02 data + `auth.users` export (only when ready for rehearsal) · G-03 which of 016–019 are applied · G-09 Flutterwave confirmation · G-10 SMS gateway · G-16 Truehost PHP facts (`phpinfo`) — and a **review of S-01/S-03/S-04/S-06 against the live project**, independent of this rebuild.
 
 ## Exact next task
-Phase 3j — billing (Paystack, server-verified, idempotent webhooks, plan expiry). See Session 12 report.
+Phase 3k — platform administration (see Session 13 report).

@@ -19,8 +19,13 @@ try {
             echo json_encode($r), "\n";
             if ($r['failed'] > 0) { exit(1); }
             break;
+        case 'expire-plans':
+            $r = (new LeenTrack\Services\Container($app))->billing()->expirePlans();
+            $app->logger()->info('cron expire-plans', $r);
+            echo json_encode($r), "\n";
+            break;
         default:
-            fwrite(STDERR, "Usage: cron.php housekeeping|purge-accounts\n");
+            fwrite(STDERR, "Usage: cron.php housekeeping|purge-accounts|expire-plans\n");
             exit(2);
     }
 } catch (Throwable $e) {
