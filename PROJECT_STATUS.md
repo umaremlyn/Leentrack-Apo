@@ -20,6 +20,12 @@ _Last updated: 2026-11-03 · Branch: `claude/laughing-hypatia-gejtzf` · Current
 | 6 Desktop & more screens | 🔶 keyboard-first POS, sales history + PDF receipt, build guide ✅ · printing, native builds, other online screens ❌ (G-92…G-94) |
 | 7–10 | ⏳ not started |
 
+## Session 19 report (Phase 6 continued — credit, expenses, reports, dashboard)
+**Built (all online-only; every figure is the server's):** credit sales screen (who owes what, overdue, per-sale balance, repayment dialog with an amount cap and a per-dialog operation id so a double press or lost answer can never record two repayments); expenses (list with total, add with category, delete with confirmation); reports (one generic viewer driven by the server: only allowed reports offered, period choice for timed ones, columns and totals from the server); real dashboard (billed, collected, expenses, gross/net profit, transactions, warning when sold items have no cost price) replacing the Phase 1 health placeholder. A shared loader gives every online screen a plain "Offline — needs a connection" message with Retry.
+**Tests executed (actual):** `flutter analyze` clean; `flutter test` → **75 passed, 1 skipped**; end-to-end against the real PHP API + MySQL → **7 of 7** (new: credit sale → repayment sent twice with the same id → one repayment; expense create/list/delete; every allowed report returns rows + columns; dashboard fields). Mutation: removing the repayment amount cap is caught. Backend code unchanged this session (PHP suite last run: 345 tests OK). Before writing the screens I captured real responses from a running local server so the field names are not guessed.
+**Not done / not verified (honest):** never seen on a real screen or device; no native build (CI workflows still unrun — G-90/G-94); purchases, transfers, suppliers, profit page, staff, locations, billing, settings, category management, expense editing, sale edit/void, report export are not in the app (G-93); amounts have no currency symbol (G-86); reports show at most 100 rows.
+**Current phase:** 6 (online screens in progress). **Next task:** next most useful screens by daily use — purchases + suppliers (stock coming in), sale void/edit (manager), then staff and settings; or Phase 7 if you prefer. Also still waiting on you: first run of the GitHub workflows (`STAGING_API_URL`).
+
 ## Session 18b note (CI workflows)
 Added `.github/workflows/backend.yml` and `flutter.yml` (tests, end-to-end, five-platform builds with downloadable artifacts) and made `tools/e2e/run.sh` work over TCP as well as a socket. **Written but not run** — no GitHub runner is available here; both workflow files parse as valid YAML and the e2e script passed locally in both modes. Needs from you: Actions enabled, and the repository variable `STAGING_API_URL`.
 
@@ -286,4 +292,4 @@ Added `.github/workflows/backend.yml` and `flutter.yml` (tests, end-to-end, five
 G-01 schema-only dump · G-02 data + `auth.users` export (only when ready for rehearsal) · G-03 which of 016–019 are applied · G-09 Flutterwave confirmation · G-10 SMS gateway · G-16 Truehost PHP facts (`phpinfo`) — and a **review of S-01/S-03/S-04/S-06 against the live project**, independent of this rebuild.
 
 ## Exact next task
-Continue Phase 6 with credit sales/repayments, expenses, reports (or start Phase 7 if you prefer) — see Session 18 report.
+Continue Phase 6: purchases + suppliers, sale void/edit, staff/settings (or start Phase 7) — see Session 19 report.

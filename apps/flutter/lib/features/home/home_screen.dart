@@ -3,11 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/providers.dart';
 import '../../app_shell.dart';
+import '../credit/credit_screen.dart';
 import '../customers/customers_screen.dart';
+import '../dashboard/dashboard_screen.dart';
+import '../expenses/expenses_screen.dart';
+import '../reports/reports_screen.dart';
 import '../inventory/inventory_screen.dart';
 import '../pos/pos_screen.dart';
 import '../sales/sales_screen.dart';
-import '../settings/health_provider.dart';
 import '../sync/sync_screen.dart';
 
 /// The signed-in app: real role from the membership, the sync bar on top, the offline-capable screens wired in.
@@ -52,16 +55,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         'customers' => const CustomersScreen(),
         'inventory' => const InventoryScreen(),
         'sales' => const SalesScreen(),
-        'dashboard' => const _ServerStatus(),
+        'dashboard' => const DashboardScreen(),
+        'credit' => const CreditScreen(),
+        'expenses' => const ExpensesScreen(),
+        'reports' => const ReportsScreen(),
         _ => Center(child: Padding(padding: const EdgeInsets.all(24), child: Text('“$id” needs the server and is part of a later phase.', textAlign: TextAlign.center))),
       };
-}
-
-class _ServerStatus extends ConsumerWidget {
-  const _ServerStatus();
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final health = ref.watch(serverHealthProvider);
-    return Center(child: health.when(loading: () => const CircularProgressIndicator(), error: (_, _) => const Text('Server not reachable'), data: (h) => Text('Server ${h.status} · v${h.version}')));
-  }
 }

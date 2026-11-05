@@ -21,8 +21,13 @@ class FakeServer implements HttpClientAdapter {
   bool offline = false;
   final pushed = <Map<String, dynamic>>[];
   int stockA = 5;
+  final repayments = <Map<String, dynamic>>[];
+  final expensesPosted = <Map<String, dynamic>>[];
+  final deleted = <String>[];
+  int balance = 25000;
 
-  ResponseBody _ok(Object data) => ResponseBody.fromString(jsonEncode({'ok': true, 'data': data, 'meta': {}}), 200, headers: {Headers.contentTypeHeader: ['application/json']});
+  final reportQueries = <Map<String, dynamic>>[];
+  ResponseBody _ok(Object data, {Map<String, dynamic> meta = const {}}) => ResponseBody.fromString(jsonEncode({'ok': true, 'data': data, 'meta': meta}), 200, headers: {Headers.contentTypeHeader: ['application/json']});
   ResponseBody _err(int s, String code, String msg) => ResponseBody.fromString(jsonEncode({'ok': false, 'error': {'code': code, 'message': msg}}), s, headers: {Headers.contentTypeHeader: ['application/json']});
 
   @override
@@ -58,6 +63,41 @@ class FakeServer implements HttpClientAdapter {
         });
       case '/sync/operations':
         return _ok([]);
+      case '/credit':
+        return _ok([
+          {
+            'id': 'c1', 'name': 'Ada', 'phone': null, 'total_owed': (balance / 100).toStringAsFixed(2), 'is_overdue': true,
+            'sales': [{'id': 's9', 'receipt_number': 'SALE-9', 'total_amount': '300.00', 'balance_due': (balance / 100).toStringAsFixed(2), 'days_old': 12, 'repayments': []}],
+          }
+        ], meta: {'summary': {'total_owed': (balance / 100).toStringAsFixed(2), 'overdue_owed': (balance / 100).toStringAsFixed(2), 'customers': 1, 'open_sales': 1}});
+      case '/sales/s9/repayments':
+        final b = o.data as Map<String, dynamic>;
+        if (repayments.any((r) => r['client_operation_id'] == b['client_operation_id'])) return _ok({'replayed': true});
+        repayments.add(b);
+        balance -= (double.parse('${b['amount']}') * 100).round();
+        return _ok({'repayment': {'id': 'r1'}});
+      case '/expenses':
+        if (o.method == 'POST') {
+          expensesPosted.add(o.data as Map<String, dynamic>);
+          return _ok({'id': 'e2'});
+        }
+        return _ok([
+          {'id': 'e1', 'description': 'Rent', 'amount': '5000.00', 'category_name': null, 'expense_date': '2026-11-01', 'payment_status': 'paid'}
+        ], meta: {'summary': {'count': 1, 'total': '5000.00'}});
+      case '/expenses/e1':
+        deleted.add(o.method);
+        return _ok({});
+      case '/expense-categories':
+        return _ok([{'id': 'k1', 'name': 'Rent & utilities'}]);
+      case '/reports':
+        return _ok([{'key': 'sales', 'allowed': true, 'timed': true}, {'key': 'credit', 'allowed': true, 'timed': false}, {'key': 'profit', 'allowed': false, 'timed': true}]);
+      case '/reports/sales':
+        reportQueries.add(Map.of(o.queryParameters));
+        return _ok([{'receipt': 'SALE-1', 'total': '300.00', 'status': 'pending'}], meta: {'columns': ['receipt', 'total', 'status'], 'total': 1, 'summary': {'sales': 1, 'billed': '300.00'}});
+      case '/reports/credit':
+        return _ok([{'customer': 'Ada', 'total_owed': '230.00'}], meta: {'columns': ['customer', 'total_owed'], 'total': 1, 'summary': {'total_owed': '230.00'}});
+      case '/dashboard':
+        return _ok({'period': {'from': '2026-11-01', 'to': '2026-11-05'}, 'metrics': {'revenue_billed': '300.00', 'revenue_collected': '70.00', 'expenses': '5000.00', 'gross_profit': '120.00', 'net_profit': '-4880.00', 'transactions': 1, 'items_missing_cost': 2}});
       case '/sales':
         return _ok([
           {'id': 's1', 'receipt_number': 'R-0001', 'created_at': '2026-03-01T10:00:00.000Z', 'customer_name': null, 'total_amount': '200.00', 'payment_status': 'completed'},
@@ -245,5 +285,96 @@ void main() {
     await t.tap(find.byKey(const Key('nav-sales')));
     await t.pumpAndSettle();
     expect(find.textContaining('Offline'), findsWidgets);
+  });
+
+  testWidgets('credit: the owner sees who owes what and records a repayment once, with a retry-safe id; the balance then drops', (t) async {
+    final (server, _) = await boot(t, role: 'owner');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-credit')));
+    await t.pumpAndSettle();
+    expect(find.text('Owed in total: 250.00'), findsOneWidget);
+    await t.tap(find.byKey(const Key('debtor-c1')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('repay-s9')));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('repay-amount')), '999'); // more than owed
+    await t.tap(find.byKey(const Key('repay-confirm')));
+    await t.pumpAndSettle();
+    expect(find.textContaining('Between 0.01'), findsOneWidget);
+    expect(server.repayments, isEmpty);
+    await t.enterText(find.byKey(const Key('repay-amount')), '100');
+    await t.tap(find.byKey(const Key('repay-confirm')));
+    await t.pumpAndSettle();
+    expect(server.repayments.single['amount'], '100.00');
+    expect(server.repayments.single['client_operation_id'], isNotEmpty);
+    expect(find.text('Owed in total: 150.00'), findsOneWidget);
+  });
+
+  testWidgets('expenses: list, add with a category, delete on long-press with confirmation', (t) async {
+    final (server, _) = await boot(t, role: 'owner');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-expenses')));
+    await t.pumpAndSettle();
+    expect(find.text('Total: 5,000.00'), findsOneWidget);
+    await t.tap(find.byKey(const Key('add-expense')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('expense-save')));
+    await t.pumpAndSettle();
+    expect(find.textContaining('Enter a description'), findsOneWidget);
+    expect(server.expensesPosted, isEmpty);
+    await t.enterText(find.byKey(const Key('expense-desc')), 'Diesel');
+    await t.enterText(find.byKey(const Key('expense-amount')), '1500.50');
+    await t.tap(find.byKey(const Key('expense-save')));
+    await t.pumpAndSettle();
+    expect(server.expensesPosted.single['description'], 'Diesel');
+    expect(server.expensesPosted.single['amount'], '1500.50');
+    expect(server.expensesPosted.single.containsKey('category_id'), isFalse);
+    await t.longPress(find.byKey(const Key('expense-e1')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('expense-delete-confirm')));
+    await t.pumpAndSettle();
+    expect(server.deleted, ['DELETE']);
+  });
+
+  testWidgets('reports: only allowed reports are offered; the period is sent for timed ones; columns and totals come from the server', (t) async {
+    final (server, _) = await boot(t, role: 'owner');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-reports')));
+    await t.pumpAndSettle();
+    expect(find.byKey(const Key('report-table')), findsOneWidget);
+    expect(find.text('SALE-1'), findsOneWidget);
+    expect(find.text('Billed: 300.00'), findsOneWidget);
+    expect(server.reportQueries.last['period'], 'month');
+    await t.tap(find.byKey(const Key('report-pick')));
+    await t.pumpAndSettle();
+    expect(find.text('Profit'), findsNothing, reason: 'a report the plan/role may not use is not offered');
+    await t.tap(find.text('Credit').last);
+    await t.pumpAndSettle();
+    expect(find.text('230.00'), findsOneWidget);
+    expect(find.byKey(const Key('report-period')), findsNothing, reason: 'credit is not a timed report');
+  });
+
+  testWidgets('dashboard shows the server numbers and warns about items with no cost price', (t) async {
+    await boot(t, role: 'owner');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-dashboard')));
+    await t.pumpAndSettle();
+    expect(find.byKey(const Key('tile-Net profit')), findsOneWidget);
+    expect(find.text('-4,880.00'), findsOneWidget);
+    expect(find.textContaining('2 sold item(s) have no cost price'), findsOneWidget);
+  });
+
+  testWidgets('offline, the online screens explain themselves and offer retry instead of failing', (t) async {
+    final (server, _) = await boot(t, role: 'owner');
+    await signIn(t);
+    server.offline = true;
+    await t.tap(find.byKey(const Key('nav-credit')));
+    await t.pumpAndSettle();
+    expect(find.byKey(const Key('online-error')), findsOneWidget);
+    expect(find.textContaining('Offline'), findsWidgets);
+    server.offline = false;
+    await t.tap(find.text('Retry'));
+    await t.pumpAndSettle();
+    expect(find.text('Owed in total: 250.00'), findsOneWidget);
   });
 }

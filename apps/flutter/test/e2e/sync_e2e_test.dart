@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:leentrack/auth/auth_service.dart';
 import 'package:leentrack/auth/authenticated_client.dart';
 import 'package:leentrack/auth/token_store.dart';
+import 'package:leentrack/core/money.dart';
 import 'package:leentrack/data/local_db.dart';
 import 'package:leentrack/features/pos/cart.dart';
 import 'package:leentrack/features/pos/pos_service.dart';
@@ -172,5 +173,50 @@ void main() {
     expect(db.outbox(), isEmpty);
     expect((await serverSales()).length, before + 1, reason: 'the device retry did not sell it a second time');
     expect(db.product(pA)!['selling_price'], 13000);
+  });
+
+  test('credit, repayment (retry-safe), expenses, reports and dashboard work end to end with the fields the screens read', () async {
+    final cust = await data(owner.post('/customers', body: {'name': 'Debtor One'}));
+    final sale = await data(owner.post('/sales', body: {
+      'client_operation_id': uuid.v4(),
+      'outlet_id': locationId,
+      'customer_id': cust['id'],
+      'items': [{'product_id': pA, 'quantity': 1}],   // earlier tests used up most of the stock; the online till refuses to oversell
+      'payment': {'mode': 'credit', 'method': 'cash', 'amount': '10'},
+    }));
+    final credit = await owner.get('/credit', query: {'per_page': 100});
+    final debtor = (credit.data as List).cast<Map<String, dynamic>>().firstWhere((c) => c['id'] == cust['id']);
+    final debt = (debtor['sales'] as List).cast<Map<String, dynamic>>().single;
+    expect(debt['id'], sale['id']);
+    for (final k in ['receipt_number', 'total_amount', 'balance_due', 'days_old']) {
+      expect(debt.containsKey(k), isTrue, reason: 'the credit screen reads $k');
+    }
+    expect(credit.meta['summary'], contains('total_owed'));
+    final before = Cents.parse('${debt['balance_due']}');
+
+    final opId = uuid.v4();
+    final body = {'amount': '50.00', 'method': 'cash', 'client_operation_id': opId};
+    await owner.post('/sales/${sale['id']}/repayments', body: body);
+    await owner.post('/sales/${sale['id']}/repayments', body: body); // the same press sent twice
+    final after = ((await owner.get('/credit')).data as List).cast<Map<String, dynamic>>().firstWhere((c) => c['id'] == cust['id']);
+    expect(Cents.parse('${(after['sales'] as List).single['balance_due']}'), before - 5000, reason: 'one repayment, not two');
+
+    final exp = await data(owner.post('/expenses', body: {'description': 'Diesel', 'amount': '1500.50', 'expense_date': DateTime.now().toIso8601String().substring(0, 10)}));
+    final list = await owner.get('/expenses', query: {'per_page': 100});
+    expect((list.data as List).cast<Map<String, dynamic>>().where((e) => e['id'] == exp['id']), isNotEmpty);
+    expect(list.meta['summary'], allOf(contains('total'), contains('count')));
+    await owner.send('DELETE', '/expenses/${exp['id']}');
+    expect(((await owner.get('/expenses')).data as List).cast<Map<String, dynamic>>().where((e) => e['id'] == exp['id']), isEmpty);
+
+    final reports = ((await owner.get('/reports')).data as List).cast<Map<String, dynamic>>();
+    expect(reports.map((r) => r['key']), containsAll(['sales', 'credit', 'expenses']));
+    for (final r in reports.where((r) => r['allowed'] == true)) {
+      final res = await owner.get('/reports/${r['key']}', query: {'per_page': 100, if (r['timed'] == true) 'period': 'month'});
+      expect(res.data, isA<List>(), reason: '${r['key']} returns rows');
+      expect(res.meta['columns'], isA<List>(), reason: '${r['key']} names its columns');
+    }
+
+    final dash = (await owner.get('/dashboard')).data as Map;
+    expect((dash['metrics'] as Map).keys, containsAll(['revenue_billed', 'revenue_collected', 'expenses', 'gross_profit', 'net_profit', 'transactions']));
   });
 }
