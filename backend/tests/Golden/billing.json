@@ -1,0 +1,485 @@
+{
+ "source": "app/billing/billing-client.tsx, supabase/functions/paystack-webhook",
+ "cases": [
+  {
+   "plan": "growth",
+   "currency": "NGN",
+   "cycle": "monthly",
+   "base": 3500,
+   "months": 1,
+   "discount": 0,
+   "days": 30,
+   "amount_minor": 350000
+  },
+  {
+   "plan": "growth",
+   "currency": "NGN",
+   "cycle": "quarterly",
+   "base": 3500,
+   "months": 3,
+   "discount": 0.1,
+   "days": 92,
+   "amount_minor": 945000
+  },
+  {
+   "plan": "growth",
+   "currency": "NGN",
+   "cycle": "yearly",
+   "base": 3500,
+   "months": 12,
+   "discount": 0.2,
+   "days": 366,
+   "amount_minor": 3360000
+  },
+  {
+   "plan": "growth",
+   "currency": "GHS",
+   "cycle": "monthly",
+   "base": 38,
+   "months": 1,
+   "discount": 0,
+   "days": 30,
+   "amount_minor": 3800
+  },
+  {
+   "plan": "growth",
+   "currency": "GHS",
+   "cycle": "quarterly",
+   "base": 38,
+   "months": 3,
+   "discount": 0.1,
+   "days": 92,
+   "amount_minor": 10260
+  },
+  {
+   "plan": "growth",
+   "currency": "GHS",
+   "cycle": "yearly",
+   "base": 38,
+   "months": 12,
+   "discount": 0.2,
+   "days": 366,
+   "amount_minor": 36480
+  },
+  {
+   "plan": "growth",
+   "currency": "KES",
+   "cycle": "monthly",
+   "base": 330,
+   "months": 1,
+   "discount": 0,
+   "days": 30,
+   "amount_minor": 33000
+  },
+  {
+   "plan": "growth",
+   "currency": "KES",
+   "cycle": "quarterly",
+   "base": 330,
+   "months": 3,
+   "discount": 0.1,
+   "days": 92,
+   "amount_minor": 89100
+  },
+  {
+   "plan": "growth",
+   "currency": "KES",
+   "cycle": "yearly",
+   "base": 330,
+   "months": 12,
+   "discount": 0.2,
+   "days": 366,
+   "amount_minor": 316800
+  },
+  {
+   "plan": "growth",
+   "currency": "ZAR",
+   "cycle": "monthly",
+   "base": 46,
+   "months": 1,
+   "discount": 0,
+   "days": 30,
+   "amount_minor": 4600
+  },
+  {
+   "plan": "growth",
+   "currency": "ZAR",
+   "cycle": "quarterly",
+   "base": 46,
+   "months": 3,
+   "discount": 0.1,
+   "days": 92,
+   "amount_minor": 12420
+  },
+  {
+   "plan": "growth",
+   "currency": "ZAR",
+   "cycle": "yearly",
+   "base": 46,
+   "months": 12,
+   "discount": 0.2,
+   "days": 366,
+   "amount_minor": 44160
+  },
+  {
+   "plan": "growth",
+   "currency": "EGP",
+   "cycle": "monthly",
+   "base": 120,
+   "months": 1,
+   "discount": 0,
+   "days": 30,
+   "amount_minor": 12000
+  },
+  {
+   "plan": "growth",
+   "currency": "EGP",
+   "cycle": "quarterly",
+   "base": 120,
+   "months": 3,
+   "discount": 0.1,
+   "days": 92,
+   "amount_minor": 32400
+  },
+  {
+   "plan": "growth",
+   "currency": "EGP",
+   "cycle": "yearly",
+   "base": 120,
+   "months": 12,
+   "discount": 0.2,
+   "days": 366,
+   "amount_minor": 115200
+  },
+  {
+   "plan": "growth",
+   "currency": "USD",
+   "cycle": "monthly",
+   "base": 2.5,
+   "months": 1,
+   "discount": 0,
+   "days": 30,
+   "amount_minor": 250
+  },
+  {
+   "plan": "growth",
+   "currency": "USD",
+   "cycle": "quarterly",
+   "base": 2.5,
+   "months": 3,
+   "discount": 0.1,
+   "days": 92,
+   "amount_minor": 675
+  },
+  {
+   "plan": "growth",
+   "currency": "USD",
+   "cycle": "yearly",
+   "base": 2.5,
+   "months": 12,
+   "discount": 0.2,
+   "days": 366,
+   "amount_minor": 2400
+  },
+  {
+   "plan": "growth",
+   "currency": "GBP",
+   "cycle": "monthly",
+   "base": 2,
+   "months": 1,
+   "discount": 0,
+   "days": 30,
+   "amount_minor": 200
+  },
+  {
+   "plan": "growth",
+   "currency": "GBP",
+   "cycle": "quarterly",
+   "base": 2,
+   "months": 3,
+   "discount": 0.1,
+   "days": 92,
+   "amount_minor": 540
+  },
+  {
+   "plan": "growth",
+   "currency": "GBP",
+   "cycle": "yearly",
+   "base": 2,
+   "months": 12,
+   "discount": 0.2,
+   "days": 366,
+   "amount_minor": 1920
+  },
+  {
+   "plan": "growth",
+   "currency": "EUR",
+   "cycle": "monthly",
+   "base": 2.5,
+   "months": 1,
+   "discount": 0,
+   "days": 30,
+   "amount_minor": 250
+  },
+  {
+   "plan": "growth",
+   "currency": "EUR",
+   "cycle": "quarterly",
+   "base": 2.5,
+   "months": 3,
+   "discount": 0.1,
+   "days": 92,
+   "amount_minor": 675
+  },
+  {
+   "plan": "growth",
+   "currency": "EUR",
+   "cycle": "yearly",
+   "base": 2.5,
+   "months": 12,
+   "discount": 0.2,
+   "days": 366,
+   "amount_minor": 2400
+  },
+  {
+   "plan": "business",
+   "currency": "NGN",
+   "cycle": "monthly",
+   "base": 9000,
+   "months": 1,
+   "discount": 0,
+   "days": 30,
+   "amount_minor": 900000
+  },
+  {
+   "plan": "business",
+   "currency": "NGN",
+   "cycle": "quarterly",
+   "base": 9000,
+   "months": 3,
+   "discount": 0.1,
+   "days": 92,
+   "amount_minor": 2430000
+  },
+  {
+   "plan": "business",
+   "currency": "NGN",
+   "cycle": "yearly",
+   "base": 9000,
+   "months": 12,
+   "discount": 0.2,
+   "days": 366,
+   "amount_minor": 8640000
+  },
+  {
+   "plan": "business",
+   "currency": "GHS",
+   "cycle": "monthly",
+   "base": 98,
+   "months": 1,
+   "discount": 0,
+   "days": 30,
+   "amount_minor": 9800
+  },
+  {
+   "plan": "business",
+   "currency": "GHS",
+   "cycle": "quarterly",
+   "base": 98,
+   "months": 3,
+   "discount": 0.1,
+   "days": 92,
+   "amount_minor": 26460
+  },
+  {
+   "plan": "business",
+   "currency": "GHS",
+   "cycle": "yearly",
+   "base": 98,
+   "months": 12,
+   "discount": 0.2,
+   "days": 366,
+   "amount_minor": 94080
+  },
+  {
+   "plan": "business",
+   "currency": "KES",
+   "cycle": "monthly",
+   "base": 850,
+   "months": 1,
+   "discount": 0,
+   "days": 30,
+   "amount_minor": 85000
+  },
+  {
+   "plan": "business",
+   "currency": "KES",
+   "cycle": "quarterly",
+   "base": 850,
+   "months": 3,
+   "discount": 0.1,
+   "days": 92,
+   "amount_minor": 229500
+  },
+  {
+   "plan": "business",
+   "currency": "KES",
+   "cycle": "yearly",
+   "base": 850,
+   "months": 12,
+   "discount": 0.2,
+   "days": 366,
+   "amount_minor": 816000
+  },
+  {
+   "plan": "business",
+   "currency": "ZAR",
+   "cycle": "monthly",
+   "base": 118,
+   "months": 1,
+   "discount": 0,
+   "days": 30,
+   "amount_minor": 11800
+  },
+  {
+   "plan": "business",
+   "currency": "ZAR",
+   "cycle": "quarterly",
+   "base": 118,
+   "months": 3,
+   "discount": 0.1,
+   "days": 92,
+   "amount_minor": 31860
+  },
+  {
+   "plan": "business",
+   "currency": "ZAR",
+   "cycle": "yearly",
+   "base": 118,
+   "months": 12,
+   "discount": 0.2,
+   "days": 366,
+   "amount_minor": 113280
+  },
+  {
+   "plan": "business",
+   "currency": "EGP",
+   "cycle": "monthly",
+   "base": 310,
+   "months": 1,
+   "discount": 0,
+   "days": 30,
+   "amount_minor": 31000
+  },
+  {
+   "plan": "business",
+   "currency": "EGP",
+   "cycle": "quarterly",
+   "base": 310,
+   "months": 3,
+   "discount": 0.1,
+   "days": 92,
+   "amount_minor": 83700
+  },
+  {
+   "plan": "business",
+   "currency": "EGP",
+   "cycle": "yearly",
+   "base": 310,
+   "months": 12,
+   "discount": 0.2,
+   "days": 366,
+   "amount_minor": 297600
+  },
+  {
+   "plan": "business",
+   "currency": "USD",
+   "cycle": "monthly",
+   "base": 6.5,
+   "months": 1,
+   "discount": 0,
+   "days": 30,
+   "amount_minor": 650
+  },
+  {
+   "plan": "business",
+   "currency": "USD",
+   "cycle": "quarterly",
+   "base": 6.5,
+   "months": 3,
+   "discount": 0.1,
+   "days": 92,
+   "amount_minor": 1755
+  },
+  {
+   "plan": "business",
+   "currency": "USD",
+   "cycle": "yearly",
+   "base": 6.5,
+   "months": 12,
+   "discount": 0.2,
+   "days": 366,
+   "amount_minor": 6240
+  },
+  {
+   "plan": "business",
+   "currency": "GBP",
+   "cycle": "monthly",
+   "base": 5,
+   "months": 1,
+   "discount": 0,
+   "days": 30,
+   "amount_minor": 500
+  },
+  {
+   "plan": "business",
+   "currency": "GBP",
+   "cycle": "quarterly",
+   "base": 5,
+   "months": 3,
+   "discount": 0.1,
+   "days": 92,
+   "amount_minor": 1350
+  },
+  {
+   "plan": "business",
+   "currency": "GBP",
+   "cycle": "yearly",
+   "base": 5,
+   "months": 12,
+   "discount": 0.2,
+   "days": 366,
+   "amount_minor": 4800
+  },
+  {
+   "plan": "business",
+   "currency": "EUR",
+   "cycle": "monthly",
+   "base": 6,
+   "months": 1,
+   "discount": 0,
+   "days": 30,
+   "amount_minor": 600
+  },
+  {
+   "plan": "business",
+   "currency": "EUR",
+   "cycle": "quarterly",
+   "base": 6,
+   "months": 3,
+   "discount": 0.1,
+   "days": 92,
+   "amount_minor": 1620
+  },
+  {
+   "plan": "business",
+   "currency": "EUR",
+   "cycle": "yearly",
+   "base": 6,
+   "months": 12,
+   "discount": 0.2,
+   "days": 366,
+   "amount_minor": 5760
+  }
+ ]
+}

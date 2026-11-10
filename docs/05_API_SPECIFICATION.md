@@ -1,0 +1,191 @@
+# 05 — API Specification (v1 draft, contract-first)
+
+Base: `https://api.<domain>/api/v1` · JSON only (`application/json; charset=utf-8`) · UTC ISO-8601 timestamps · money as **strings** with 2 dp (`"1500.00"`) to avoid float drift · ids are UUID strings (source ids preserved).
+
+This is the single contract for Flutter **and** the Next.js app (`lib/api-client.ts` in Phase 7). It is derived from the 178 Supabase call sites; section 9 maps each source operation to its endpoint so nothing is dropped. Status: **design** — endpoints become "implemented" only when the PHP code, tests and docs exist (tracked in `PROJECT_STATUS.md`).
+
+## 1. Conventions
+
+**Envelope**
+```json
+{ "ok": true,  "data": { ... }, "meta": { "page": 1, "per_page": 50, "total": 123, "request_id": "..." } }
+{ "ok": false, "error": { "code": "validation_failed", "message": "Human text", "fields": { "email": ["invalid"] } }, "meta": { "request_id": "..." } }
+```
+Error codes → HTTP: `validation_failed` 422 · `unauthenticated` 401 · `token_expired` 401 · `forbidden` 403 · `not_found` 404 (also used for cross-tenant ids — never 403, to avoid id probing) · `conflict` 409 · `stale_resource` 409 · `insufficient_stock` 409 · `plan_limit_reached` 402 · `feature_not_in_plan` 402 · `rate_limited` 429 (+`Retry-After`) · `server_error` 500 (generic text only).
+
+**Auth:** `Authorization: Bearer <access_token>` (opaque, 15 min, SHA-256 stored). Refresh token (opaque, 30 d, rotating, family-revocation on reuse). Business context: `X-Business-Id: <uuid>` header, verified against `business_members` on **every** request; outlet context optional `X-Outlet-Id`. Device: `X-Device-Id` (client-generated stable UUID) required for sync endpoints.
+**Idempotency:** mutating money endpoints accept `Idempotency-Key` header (or `client_operation_id` body field); replays return the stored result.
+**Pagination:** `?page=1&per_page=50` (max 200) and `?cursor=` for large feeds; `Link`-style info in `meta`. **Filtering:** documented per endpoint; unknown filters rejected (422). **Sorting:** `?sort=-created_at`.
+**Versioning:** URI major version; additive changes only within v1; `X-API-Version` response header.
+**CORS:** allow-list from env (`CORS_ALLOWED_ORIGINS`), no wildcard, credentials not used (bearer tokens).
+
+## 2. Auth & account
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/auth/register` | `{email,password,full_name,business_name,business_type,currency,phone?,address?}` — `role`, `plan`, `status` and any unknown field are **rejected with 422**; always responds `202` with a generic message (no account enumeration); creates user, business (plan `free`), owner membership, default "Main" outlet, sends verification e-mail; login requires a verified e-mail |
+| POST | `/auth/login` | `{email,password,device:{id,name,platform}}` → `{access_token,refresh_token,expires_in,user,memberships[]}`; legacy-hash transition path (06) |
+| POST | `/auth/refresh` | rotating refresh |
+| POST | `/auth/logout` | revokes current session; `?all=1` revokes all |
+| POST | `/auth/forgot-password` | always 202 (no account enumeration) |
+| POST | `/auth/reset-password` | `{token,password}` single-use, 60 min |
+| POST | `/auth/verify-email` · `/auth/resend-verification` | OTP/link |
+| POST | `/auth/verify-phone` · `/auth/resend-phone-code` | **blocked on SMS provider decision (G-10)** |
+| GET/PATCH | `/me` | profile incl. avatar upload `POST /me/avatar` (multipart, validated) |
+| POST | `/me/change-password` | requires current password; revokes other sessions |
+| GET | `/me/sessions` · DELETE `/me/sessions/{id}` | real sessions |
+| GET | `/me/export` | async-safe JSON export (queued by cron if large) |
+| DELETE | `/me` | `{password,confirm}` — retention rules in 07 |
+| POST | `/invites/accept` | `{token,password?,full_name?}` — signed single-use staff invite (replaces `/auth/callback?type=invite`) |
+
+## 3. Business & settings
+
+`GET /businesses` (memberships) · `POST /businesses` (plan-limited) · `GET/PATCH /businesses/{id}` (name, currency, tax_rate… — **never plan fields**) · `GET/PUT /businesses/{id}/branding` (owner write) · `GET/PUT /businesses/{id}/loyalty-settings` (owner write) · `GET/PUT /businesses/{id}/settings` (key allow-list: low-stock alert keys) · `POST /businesses/{id}/low-stock-alert` (`force`) · `DELETE /businesses/{id}` (owner, typed confirmation, soft-delete + grace).
+Locations: `GET/POST /locations`, `GET/PATCH/DELETE /locations/{id}` (delete blocked if stock/transfers exist → deactivate).
+
+## 4. Catalogue & stock
+
+* Categories `GET/POST /categories`, `PATCH/DELETE /categories/{id}`.
+* Products `GET /products?search=&category_id=&type=&active=&low_stock=1&barcode=&location_id=`, `POST`, `GET/PATCH/DELETE /products/{id}` (delete = archive if referenced), `POST /products/import?mode=validate|commit[&location_id=]` (body `text/csv`, or JSON `{"csv":"..."}`; ≤2 MB, ≤2000 rows, UTF-8; same column aliases and row rules as the web dialog; all-or-nothing commit; plan limits enforced; response lists per-row errors), `GET /products/export` (CSV with BOM, formula-injection-safe, plan-gated `exportReports`, needs `reports.read`).
+* Stock (NEW) `POST /stock/adjustments` `{product_id,location_id,delta|new_quantity,reason}`, `GET /stock/movements?product_id=&location_id=&from=&to=`, `GET /stock/levels?location_id=`, `GET /stock/valuation?method=cost|retail`.
+* Transfers `GET/POST /transfers`, `GET /transfers/{id}`, `POST /transfers/{id}/approve|dispatch|receive|cancel` (receive takes per-item `quantity_received`).
+
+## 5. Sales, customers, credit
+
+* **Checkout** `POST /sales` — body:
+```json
+{ "client_operation_id":"uuid", "outlet_id":"uuid|null", "customer_id":"uuid|null",
+  "items":[{"product_id":"uuid","quantity":2}],
+  "discount":{"manual":"0.00","apply_group":true,"points_redeemed":0},
+  "payment":{"mode":"full|credit","method":"cash","amount":"3000.00"},
+  "notes":null, "client_created_at":"2026-11-02T10:00:00Z" }
+```
+ Server returns the **authoritative** sale (totals, receipt_number, balance, change, points earned). Totals sent by a client are not accepted fields (rejected if present).
+* `GET /sales?from=&to=&customer_id=&outlet_id=&status=&method=&search=`, `GET /sales/{id}` (items, repayments, edits, `can_edit`, `paid_so_far`, `revision`), `POST /sales/{id}/edit` (rules §6 of 04; body `{items,discount,extra_paid,extra_method,reason,expected_revision,expected_paid}`), `POST /sales/{id}/void` / `/refund` (NEW; permission `sales.void`), `GET /sales/{id}/document?kind=receipt|invoice&format=json|pdf`.
+* Customers `GET/POST /customers`, `GET/PATCH/DELETE /customers/{id}` (archive), `GET /customers/{id}/sales`, `/loyalty-ledger`, `/statement?from=&to=`; Groups `GET/POST /customer-groups`, `PATCH/DELETE /customer-groups/{id}` (write: owner/manager).
+* Credit `GET /credit?status=open|overdue&customer_id=`, `POST /sales/{id}/repayments` `{amount,method,notes,client_operation_id}` → `{balance,status,receipt}`; `GET /customers/{id}/debt`.
+
+## 6. Money-out & procurement
+
+Expenses `GET/POST /expenses`, `PATCH/DELETE /expenses/{id}`, categories `GET/POST /expense-categories`, `DELETE`. Suppliers `GET/POST /suppliers`, `PATCH/DELETE`. Purchases `GET/POST /purchase-orders`, `GET/PATCH /purchase-orders/{id}` (draft only), `POST /purchase-orders/{id}/order|cancel|receive` (`{items:[{item_id,quantity}],client_operation_id}`), `DELETE` (draft only).
+
+## 7. Analytics
+
+`GET /dashboard?from=&to=&outlet_id=` → distinct named metrics: `revenue_billed`, `revenue_collected`, `tax_collected`, `cogs`, `gross_profit`, `expenses`, `net_profit`, `credit_outstanding`, `credit_overdue`, `inventory_value_cost`, `inventory_value_retail`, `low_stock_count`, `out_of_stock_count`, `recent_sales[]`, `top_products[]`, `series[]`.
+`GET /reports/{sales|profit|inventory|expenses|credit|purchases|outlets|products}?from=&to=&outlet_id=&format=json|csv`. `GET /profit?period=today|week|month|lastMonth|custom` returns `ProfitResult` shape (`summary`, `bySale`, `byProduct`) identical to `lib/profit/compute.ts`.
+
+## 8. Team, billing, admin, ops
+
+* Staff `GET/POST /staff` (creates an invite; the link is **e-mailed only, never returned to the inviter**), `PATCH/DELETE /staff/{id}`, `POST /staff/{id}/resend-invite`; roles validated against enum; outlet assignment `PUT /staff/{id}/outlets` (NEW).
+* Billing `GET /billing/plans` (server catalogue), `GET /billing/subscription`, `POST /billing/checkout` `{plan,cycle,currency,provider}` → provider init `{reference,authorization_url|access_code}`, `GET /billing/verify?reference=` (server-side provider verify; **the only path that can activate**), `GET /billing/history`, `POST /billing/cancel`. Webhooks (unauthenticated, signature-verified): `POST /webhooks/paystack`, `POST /webhooks/flutterwave` (**only after G-09 is resolved**).
+* Admin (platform_admins only) `GET /admin/stats|businesses|users|payments|audit-logs`, `PATCH /admin/businesses/{id}/plan|status`, `POST /admin/notices`, `DELETE /admin/users/{id}` (soft, audited, step-up confirmation).
+* Sync `POST /sync/push` (batch ≤50 ops), `GET /sync/pull?since=<cursor>&entities=products,customers,…`, `GET /sync/status`, `POST /sync/ops/{id}/resolve` — protocol in §10.
+* Ops `GET /health` (no secrets), CLI cron entrypoints (not HTTP): `bin/cron.php expire-plans|low-stock|cleanup|reconcile`.
+
+## 9. Source-operation → endpoint traceability (every Supabase call site)
+
+| Source call (file) | Endpoint |
+|---|---|
+| `auth.signUp/signInWithPassword/signOut/resetPasswordForEmail/updateUser/verifyOtp/resend/getSession/exchangeCodeForSession` (auth-context, register, login, forgot/reset/verify-*, auth/callback, settings) | `/auth/*`, `/me/change-password`, `/invites/accept` |
+| `profiles` select/upsert/update (auth-context, profile) | `/me` |
+| `storage.avatars` (profile) | `/me/avatar` |
+| `businesses` select/insert/update (business-context, auth-context, profile, lib/subscription) | `/businesses*` (plan fields excluded) |
+| `staff` select/insert/update/delete + `functions.invoke('invite-staff')` (staff, contexts, callback) | `/staff*`, `/invites/accept` |
+| `locations` CRUD (locations, transfers) | `/locations*` |
+| `categories` CRUD (categories, inventory, pos, csv-import) | `/categories*` |
+| `products` CRUD / select (inventory, pos, transfers, purchases, reports, dashboard, low-stock-banner, edit-sale-dialog, payment-modal stock check) | `/products*` |
+| `customers`, `customer_groups` (customers, pos, customer-select, payment-modal points re-read) | `/customers*`, `/customer-groups*` (points read-back returned inside checkout response) |
+| `loyalty_ledger`, `loyalty_settings` (customers, use-loyalty-settings) | `/customers/{id}/loyalty-ledger`, `/businesses/{id}/loyalty-settings` |
+| `rpc complete_sale / complete_sale_with_points` (payment-modal) | `POST /sales` |
+| `from('sales').insert` offline (pos) | `POST /sync/push` (op `sale.create`) |
+| `sales` select (sales, credit, dashboard, reports, profit/load) | `/sales`, `/credit`, `/dashboard`, `/reports/*`, `/profit` |
+| `sale_items` select (sales, reports, dashboard, profit/load) | embedded in the above |
+| `rpc sale_payment_info`, `rpc edit_sale` (sales, edit-sale-dialog) | `GET /sales/{id}`, `POST /sales/{id}/edit` |
+| `debt_repayments` select/insert + sales status update (credit, sales) | `POST /sales/{id}/repayments` |
+| `expenses`, `expense_categories` (expenses, dashboard, profit/load) | `/expenses*`, `/expense-categories*` |
+| `suppliers`, `purchase_orders`, `purchase_order_items`, `rpc receive_purchase_order` (purchases, dashboard) | `/suppliers*`, `/purchase-orders*` |
+| `location_transfers`, `transfer_items` (transfers) | `/transfers*` |
+| `settings` upsert/select + `functions.invoke('low-stock-alert')` (settings) | `/businesses/{id}/settings`, `/low-stock-alert` |
+| `business_branding` (use-business-branding) | `/businesses/{id}/branding` |
+| `billing_history` (profile, billing, lib/billing, admin) | `/billing/history`, `/admin/payments` |
+| Paystack inline + `paystack-webhook` | `/billing/checkout`, `/billing/verify`, `/webhooks/paystack` |
+| `audit_logs` (lib/audit-logs, admin) | server-side `AuditService`; `/admin/audit-logs` |
+| `user_sessions` (lib/user-sessions) | `/me/sessions` |
+| `delete-account.ts`, `export-user-data.ts` | `DELETE /me`, `GET /me/export` |
+| admin page: businesses update/delete, profiles delete, audit insert | `/admin/*` |
+| `expire-plans` function | `bin/cron.php expire-plans` |
+
+## 10. Offline synchronisation protocol
+
+**Client queue row** (SQLite): `op_id (uuid v4, PK)`, `business_id`, `outlet_id`, `device_id`, `user_id`, `type`, `created_at` (device clock, UTC), `payload` (JSON), `status` ∈ `pending|sending|synced|conflict|failed|rejected`, `attempts`, `next_retry_at`, `last_error`, `server_ref`.
+**Types:** `sale.create`, `sale.repayment`, `customer.create`, `expense.create`, `stock.adjust` (conflict-prone, restricted), others read-only offline.
+**Push:** `POST /sync/push {device_id, ops:[{op_id,type,created_at,payload}]}` → per-op result `{op_id, result:"applied|replayed|conflict|rejected", server_ref, detail}`. Server stores each `op_id` in `sync_operations` (UNIQUE(business_id, op_id)) in the **same transaction** as its effect → exactly-once effect, at-least-once delivery. HTTP 200 for the batch even if some ops conflict.
+**Offline sale semantics:** the sale happened; it is **never discarded**. Server revalidates prices? No — an offline sale is accepted at the **price the customer was quoted** when it is within a configurable tolerance of the catalogue price, else flagged `price_changed` for review but still recorded (the till already took the money). Stock: if stock is insufficient at sync time the sale is still recorded and stock goes **negative-flagged**: `stock_levels.quantity` may drop below 0 only via `sync` ops, producing an `oversold` conflict ticket (owner resolves: adjust stock, or void). This is the explicit answer to "two devices sell the last unit". Normal online checkout still refuses to oversell.
+**Conflict types:** `oversold`, `price_changed`, `product_deleted`, `customer_missing`, `plan_limit`, `permission_revoked`, `period_closed`. Each yields a `sync_conflicts` row visible in `GET /sync/status` and in-app "Sync issues" screen with resolve actions; never silently dropped, never overwritten.
+**Pull:** monotonically increasing `change_seq` per business (`entity_changes` table); `GET /sync/pull?since=n` returns upserts/tombstones for allow-listed entities, paginated; client applies in one SQLite transaction and stores the new cursor.
+**Reconciliation:** nightly `reconcile` cron recomputes `products.stock_quantity` vs `Σ stock_levels` vs `Σ stock_movements` and reports drift (never auto-corrects money).
+**Clock skew:** `created_at` is advisory (stored as `client_created_at`); ordering and reports use server `received_at` for audit and `client_created_at` for the business date of the sale, clamped to ≤ now+5 min and ≥ now−30 days (beyond → needs owner approval).
+
+
+> **Phase 3a as built:** products/categories/stock endpoints follow §4 with these specifics — `DELETE /products/{id}` archives (restore via `POST /products/{id}/restore`); product `PATCH` rejects `stock_quantity`; list filters `search, category_id, type, active, barcode, stock_status=low|out|ok, archived, sort=name|created_at|selling_price|stock_quantity, dir, page, per_page` (unknown filters → 422); `cost_price` is omitted for roles without `products.cost.read` (cashiers); outlet-restricted members see stock only for their outlets.
+
+> **Phase 3b as built:** `GET/POST /customers`, `GET/PATCH/DELETE /customers/{id}` (DELETE archives), `POST /customers/{id}/restore`, `GET /customers/{id}/loyalty-ledger`; `GET/POST /customer-groups`, `PATCH/DELETE /customer-groups/{id}`; `GET/PUT /businesses/{id}/loyalty-settings`. Customer body fields: `name, email, phone, address, notes, date_of_birth, group_id`. Counters (`loyalty_points, total_spent, visit_count, last_visit`) are read-only: any attempt to send them is a 422. List filters: `search` (name/e-mail/phone, wildcards escaped), `group_id`, `archived` (managers+), `sort=name|created_at|total_spent|last_visit|visit_count|loyalty_points`, `dir`, `page`, `per_page`. Money fields are strings; loyalty settings: `{enabled, spend_per_point, point_value, is_default}`.
+
+> **Phase 3c as built:**
+> * `POST /sales` — body `{client_operation_id (UUID, or Idempotency-Key header), outlet_id?, customer_id?, items:[{product_id, quantity}], discount?:{manual, apply_group, points_redeemed}, payment:{mode:"full"|"credit", method, amount}, notes?, client_created_at?}`. No price, total, tax, cost, status or user field is accepted (422). `201` creates; `200` + `meta.replayed:true` returns the original sale for a repeated `client_operation_id`; the same id with different content is `409 idempotency_conflict`. Errors: `insufficient_stock` 409, `customer_required` 422, `plan_limit_reached` 402 (only if `ENFORCE_SALES_LIMIT`).
+> * `GET /sales` — filters `from,to` (local days in the business time zone), `status`, `payment` (credit|cash|card|bank_transfer|mobile_money|other), `customer_id`, `outlet_id`, `search`, `page`, `per_page`; `meta.summary` {count,total} excludes voided; `meta.sales_limit_reached`.
+> * `GET /sales/{id}` — items (snapshots), discounts breakdown, `paid_so_far`, `repaid`, `balance_due`, `can_edit`, `edit_count`; `unit_cost` and `profit_info` only with cost/profit permission.
+> * `POST /sales/{id}/edit` — `{items:[{product_id,quantity,unit_price}], discount, extra_paid, extra_method, reason, expected_updated_at, expected_paid}`; owner/manager; `409 stale_resource` when the screen is out of date.
+> * `POST /sales/{id}/void` — `{reason}` (3–200 chars); manager+; restores stock, reverses customer spend/visit/points, returns `refund_due`.
+> * `GET /sales/{id}/document?format=json` — receipt/invoice model + `title`, `status`, `file_name`, `share_message`, `whatsapp_number`; `format=pdf` → 501.
+> * `GET|PUT /businesses/{id}/branding` — read: any member; write (full replacement): owner. Logo: PNG/JPEG/WebP data-URL ≤200,000 chars, signature-checked.
+
+> **Phase 3d as built:**
+> * `POST /sales/{id}/repayments` — `{client_operation_id (UUID or Idempotency-Key), amount, method?, notes?}`; permission `credit.repay` (manager+). `201` records it; `200` + `meta.replayed` repeats an earlier one (same content) with its original balances; same id with different content → `409 idempotency_conflict`. Errors: `422` amount ≤ 0 / > balance / bad decimals; `409 not_open` (fully paid, voided). Returns `{repayment, sale:{status, previous_balance, balance_due}, document}` where `document` is the payment receipt model.
+> * `GET /credit` — customers with open debts, biggest first; each has `sales[]` (oldest first) with `balance_due`, `days_old`, `badge` (`recent` / `two_weeks` ≥14d / `overdue` ≥30d) and `repayments[]`; filters `search`, `customer_id`, `overdue`, `page`, `per_page`; `meta.summary` {total_owed, overdue_owed, customers, open_sales}.
+> * `GET /customers/{id}/debt`, `GET /customers/{id}/statement?from&to` (opening balance, running balance per line, closing = current debt), `GET /customers/{id}/sales`.
+> * `DELETE /customers/{id}` → `409 customer_owes_money` while any balance remains.
+
+
+## Phase 3e — implemented (expenses, profit, dashboard)
+`GET/POST /expenses`, `GET/PATCH/DELETE /expenses/{id}` · `GET/POST /expense-categories`, `POST /expense-categories/seed-defaults`, `PATCH/DELETE /expense-categories/{id}` · `GET /profit?period|from&to&outlet_id&page&per_page` · `GET /dashboard?from&to&outlet_id`. All require auth + tenant; owner/manager only (`expenses.manage`, `profit.read`, `dashboard.read`). Unknown filters → 422. Money as 2-dp strings. Dashboard default = month to date in the business time zone; `series` is null for ranges over 92 days.
+
+
+## Phase 3f — implemented (suppliers & purchase orders)
+`GET/POST /suppliers`, `GET/PATCH/DELETE(archive) /suppliers/{id}`, `POST /suppliers/{id}/restore` · `GET/POST /purchase-orders`, `GET/PATCH/DELETE /purchase-orders/{id}` (PATCH/DELETE draft only; `items` replaces all lines) · `POST /purchase-orders/{id}/order|cancel|close|receive`.
+Create body: `{supplier_id?, outlet_id?, notes?, items:[{product_id?|product_name, quantity, unit_cost?}]}` — totals, numbers, status and names are server-side (`total_cost`, `status`, `order_number` → 422). Receive body: `{client_operation_id (or Idempotency-Key header), items:[{item_id, quantity}], update_cost?}` → 201 `{receipt_id, order}`; replay → 200 `meta.replayed=true`; errors `invalid_status`, `over_receive` (per-line `fields`), `product_unavailable`, `idempotency_conflict` (all 409). Requires `purchases.manage` / `suppliers.manage` (owner, manager). Outlet-restricted managers only see and receive their outlets' orders.
+
+
+## Phase 3g — implemented (stock transfers)
+`GET/POST /transfers`, `GET/PATCH /transfers/{id}` (PATCH pending only), `POST /transfers/{id}/dispatch|receive|cancel`. Create: `{from_location_id, to_location_id, notes?, items:[{product_id, quantity}]}`. Dispatch/receive: `{client_operation_id | Idempotency-Key, items?:[{item_id, quantity}]}` — omitted items ship / arrive in full; returns the transfer (201, or 200 with `meta.replayed`). Errors: `insufficient_stock`, `invalid_status`, `over_quantity`, `not_pending`, `idempotency_conflict` (409). Number `TR-000001` server-issued. Owner/manager only.
+
+
+## Phase 3h — implemented (reports)
+`GET /reports` lists the reports the caller may run. `GET /reports/{name}` for `sales|profit|inventory|expenses|credit|purchases|outlets|products`. Common filters: `period` (today|week|month|lastMonth|…|custom) or `from`+`to` (YYYY-MM-DD, inclusive, business time zone), `outlet_id`, `format=json|csv`, `page`, `per_page`. Report-specific: inventory `stock_status=low|out|ok`; expenses `category_id,payment_method,search`; credit `search,overdue`. JSON: `data` = rows, `meta` = pager + `report`, `period`, `columns`, `summary`. CSV: attachment with a BOM and a header row of the same `columns`. Errors: 402 `feature_not_in_plan` (CSV on free), 403, 404 (unknown report / foreign outlet), 413 `range_too_large`, 422 unknown filter.
+
+
+## Phase 3i + gap fixes — implemented
+* **Account:** `GET /me/export` (personal data), `POST /me/deletion {password, confirm:"DELETE"}` → 202 `{status, scheduled_for, grace_days}`, public `POST /auth/cancel-deletion {email, password}`, `GET /businesses/{id}/export[?section=NAME&page=N]` (owner), `PUT|GET|DELETE /me/avatar` (body = image bytes). Login while a deletion is pending → 403 `account_pending_deletion` (only after the password is verified). `409 owns_business_with_staff`, `409 platform_admin`.
+* **Users:** `user.must_change_password` and `user.has_avatar` in login and `/me`.
+* **Staff:** `PUT /staff/{id}/outlets {outlet_ids:[…]}` (empty list = all outlets); staff objects include `outlet_ids`.
+* **Suppliers:** `POST /purchase-orders/{id}/payments {amount, method?, reference?, notes?, client_operation_id}`, `GET /suppliers/{id}/statement`; supplier objects include `balance_owed`; order objects include `paid`, `balance_due`, `payments`.
+* **Reports:** new `customers` report; purchases report gains `paid`, `balance_due`, `paid_to_suppliers`, `payable_to_suppliers`.
+* **Documents:** `GET /sales/{id}/document?format=pdf` → `application/pdf` attachment.
+* **Stock:** adjustment reason `supplier_return`.
+* **Config:** `MAIL_DRIVER=smtp|native|file`, `SMTP_*`, `AVATAR_DIR`, `REPORT_MAX_ROWS`; cron `php bin/cron.php purge-accounts`.
+
+
+## Phase 3j — implemented (billing)
+`GET /billing` (current plan, effective plan, days left, last payment) · `GET /billing/plans?currency=` (server-priced, with limits) · `GET /billing/history` · `POST /billing/checkout {plan, cycle, currency?}` → 201 `{payment, authorization_url, access_code, note}` (open the URL or use the access code with the provider's SDK) · `POST /billing/verify {reference}` → asks the provider; returns the payment and the resulting plan (safe to call repeatedly) · public `POST /webhooks/paystack` (signature header `x-paystack-signature`). All except the webhook need the owner (`billing.manage`). Errors: `billing_not_configured` 503, `downgrade_not_allowed` 409, `too_many_pending` 429, `payment_provider_error`/`payment_provider_unreachable` 502. Payment statuses: `pending`, `success`, `failed` (with `failure_reason`), `abandoned`, `refunded`. Config: `PAYSTACK_SECRET_KEY`, `PAYSTACK_CALLBACK_URL`, `PAYMENT_RETENTION_YEARS`; cron `php bin/cron.php expire-plans`.
+
+
+## Phase 3k — implemented (platform admin; every route needs a platform admin, others get 404)
+`GET /admin/stats` · `GET /admin/businesses[?search&plan&status]`, `GET /admin/businesses/{id}` · `POST /admin/businesses/{id}/plan {plan, plan_expiry (paid plans), reason, password}` · `POST …/status {status: active|suspended|cancelled, reason, password}` · `POST …/delete {confirm_name, reason, password}` · `GET /admin/users[?search&status]`, `POST /admin/users/{id}/disable|enable|delete {reason, password}` (delete → 202, 14-day grace) · `GET /admin/payments[?status&business_id]` · `GET /admin/audit[?actor_id&business_id&action&from&to]` · `GET|POST /admin/notices`, `POST /admin/notices/{id}/end` · any signed-in user: `GET /notices`. CLI: `php bin/make-admin.php EMAIL | --revoke EMAIL | --list`.
+
+
+## Phase 3l — implemented (settings, jobs)
+Owner only: `GET|PUT /businesses/{id}/alert-settings {enabled, email, frequency: daily|hourly}`, `POST /businesses/{id}/alert-settings/test` (sends now if anything is low; 5 per hour). Any user: `PATCH /me/preferences {notifications:{email,sms,marketing}, language, privacy:{show_profile,share_data}}`; `preferences` is part of the `user` object in login and `/me`. Platform admin: `GET /admin/jobs`, `GET /admin/jobs/{job}` (history with summaries; `reconcile` carries the findings), `GET /admin/health`. Existing endpoints already cover the rest of the source's Settings page: tax rate (`PATCH /businesses/{id}`), currency (`PATCH /me`), time zone (`PATCH /locations/{id}`), password and sessions, account deletion.
+
+
+## Phase 4 — implemented (offline sync) — full contract in docs/14_SYNC_PROTOCOL.md
+`GET /sync/info` · `POST /sync/push {device_id, device_time, operations[≤100]}` · `POST /sync/pull {cursors, limit, resources}` · `GET /sync/operations[?status=attention|conflict|rejected|applied|discarded]` · `POST /sync/operations/{id}/retry|accept-prices|discard`. Also: `POST /sales` accepts an optional `expected_total` (409 `price_changed` when the total is different now).

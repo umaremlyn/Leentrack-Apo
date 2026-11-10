@@ -1,0 +1,13 @@
+# Front controller for cPanel/Apache. Document root must be THIS directory (backend/public).
+Options -Indexes -MultiViews
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTP:Authorization} ^(.*)
+  RewriteRule .* - [E=HTTP_AUTHORIZATION:%1]
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^ index.php [L]
+</IfModule>
+<FilesMatch "^\.">
+  Require all denied
+</FilesMatch>

@@ -1,0 +1,206 @@
+# 11 — Architecture (as built in Phase 1)
+
+## Principle
+One PHP/MySQL API (`/api/v1`) is the foundation. The Flutter app and the Next.js app are both ordinary clients of it. Nothing in this repository touches the production Vercel/Supabase deployment.
+
+## Backend layout (`backend/`)
+```
+public/            ONLY directory exposed by the web server (front controller index.php, .htaccess)
+app/Core/          framework-free infrastructure: Env, Request, Response, Router, ApiException, Logger,
+                   Db (PDO), Migrator, RateLimiter, Money, Uuid, App (service holder)
+app/Http/          Kernel (dispatch, error mapping, security headers, CORS), Middleware/, Controllers/
+config/app.php     reads env; nothing secret is committed
+routes/api.php     the single route table; routes are private unless explicitly marked public
+database/migrations/NNNN_name.up.sql / .down.sql   checksummed, tracked in schema_migrations
+bin/               CLI entry points (migrate, keygen; cron jobs arrive in later phases)
+storage/           logs/cache — outside the web root in production
+tests/Unit, tests/Integration (real MySQL)
+```
+Layering rule for upcoming phases: **Controller (thin: validate → call service → shape response) → Service (business rules, transactions, authorization via Policy) → Repository (SQL, always tenant-scoped).** Controllers never touch PDO; repositories never decide permissions.
+
+## Request lifecycle
+`public/index.php` → `bootstrap` (env, UTC, `display_errors=0`) → `Request::fromGlobals` (proxy headers trusted only from configured proxies) → `Kernel::dispatch` (prefix check → router → middleware chain → controller) → `Kernel::decorate` (request id, security headers, exact-match CORS) → `Response::send`. Any `ApiException` becomes the standard error envelope; any other `Throwable` is logged with a request id and returned as a generic 500 (no SQL, paths or traces leave the server). `APP_DEBUG=true` is refused when `APP_ENV=production`.
+
+## Response contract
+`{ok:true,data,meta}` / `{ok:false,error:{code,message,fields?},meta:{request_id}}`; money as 2-dp strings; UTC timestamps. Full contract: `05_API_SPECIFICATION.md`.
+
+## Money
+`Money` stores integer minor units (no floats, no bcmath/gmp — the sandbox and many shared hosts lack bcmath), rounds half away from zero, caps at 1,000,000,000.00 (the source's own limit) so ratio math cannot overflow. Tax/discount tests mirror the source rules (`04_BUSINESS_RULES.md`). Golden parity tests against the original TypeScript are Phase 3.
+
+## Database conventions
+utf8mb4, InnoDB, DATETIME(3) in UTC (connection forced to `+00:00`), strict `sql_mode`, `READ COMMITTED`, real prepared statements (emulation only on the migrator connection, which runs multi-statement files). `Db::transaction` retries once on deadlock/lock-wait timeout. MySQL DDL auto-commits, so migrations are not atomic: keep them small, idempotent, and the runner records a version only after a file fully succeeds.
+
+## Rate limiting
+MySQL-backed fixed window (`rate_limits`), usable on shared hosting. Applied per route with `'throttle:max,seconds'`; **fails closed** (503) if the store is unavailable. `TRUSTED_PROXIES` controls whether `X-Forwarded-For` is believed.
+
+## Decisions (ADR log)
+| ID | Decision | Why |
+|---|---|---|
+| D-01 | Monorepo: `backend/`, `apps/flutter/`, `docs/` in Leentrack-Apo | single source for contract + clients |
+| D-02 | Opaque revocable tokens in MySQL (Phase 2) | revocation, no key-rotation burden |
+| D-03 | No framework for core; Composer only for dev tooling | shared-hosting simplicity, small attack surface |
+| D-05 | Money = integer minor units | exactness without bcmath |
+| D-06 | Rules in services, not DB triggers | testable, portable, shared-hosting friendly |
+| D-12 | Routes private by default; `public` is explicit and asserted by a test | prevents accidentally exposed endpoints |
+| D-13 | Rate limiter fails closed | brute-force protection must not silently disappear |
+| D-14 | PHP minimum 8.3 in composer.json for now; CI/prod target 8.4 | sandbox has 8.3.6; code uses no 8.4-only features |
+| D-15 | Staff invite links are e-mailed only and never returned to the inviter | the source returned the link to the owner; that lets an owner accept on the invitee's behalf and set the password of an account on the invitee's e-mail (S-16) |
+| D-16 | Platform admin = row in `platform_admins`, created by CLI only; checked on every request; non-admins get 404 | closes S-01/S-02; role can never come from a request or a profile field |
+| D-17 | Business role lives only in `business_members`; access needs `status='active' AND user_id=caller`; membership re-checked on every request; non-members get 404 | closes S-05 (server-side roles), S-16; removal/deactivation is immediate without token revocation |
+| D-18 | Tokens: opaque, SHA-256 at rest, access 15 min, refresh 30 d rotating; presenting a rotated refresh token revokes the session | theft detection. Clients MUST serialise refresh calls (a concurrent double refresh looks like reuse) |
+| D-19 | Billing columns (`plan*`, `paystack_*`) are not writable by any tenant endpoint; `PlanCatalog::effective()` applies expiry on every request | closes S-06 and stops access outliving payment before the nightly job |
+| D-20 | Registration/forgot/verify never reveal whether an e-mail exists; login errors are identical for unknown user and wrong password | no account enumeration |
+| D-21 | Product `stock_quantity` cannot be edited via product PATCH; all changes go through `StockService` (adjustments with reason, imports, later sales/purchases/transfers) | the source's edit form overwrote stock silently with no history; now every unit is accounted for in `stock_movements` |
+| D-22 | `DELETE /products/{id}` archives; barcode uniqueness applies to non-archived items (virtual generated column) | sale items and stock history must keep referencing the item; the source's hard delete either failed (RESTRICT) or destroyed the item |
+| D-23 | `cost_price` is hidden from roles without `products.cost.read` | the source exposed cost to cashiers through RLS; they only need the selling price |
+| D-24 | Stock mutation lock order: product row, then stock level row (both `FOR UPDATE`) | serialises concurrent changes without deadlocks; verified by an 8-process test |
+| D-25 | Online code can never drive stock below zero; only the offline-sync path (Phase 4) may, producing a visible `oversold` conflict | satisfies "two devices sell the last unit" without silently losing a sale |
+| D-26 | The sale transaction (3c) must lock the customer row `FOR UPDATE` **before** inserting the sale; `LoyaltyService` re-locks (no-op) and refuses to run outside a transaction | MySQL's FK check takes a shared lock on the customer row; two concurrent sales would both hold it and deadlock when loyalty tries to update. (Postgres avoided this with `FOR NO KEY UPDATE`; MySQL has no equivalent.) |
+| D-27 | Customers are archived, never deleted (sales, repayments and the points ledger reference them); archived customers keep their points | the source's hard delete set `sales.customer_id` to NULL, silently orphaning financial history |
+| D-28 | No endpoint accepts `loyalty_points`, `total_spent`, `visit_count`, `last_visit`; they change only inside `LoyaltyService` / the sale service, each change with an append-only ledger row | the source needed triggers to stop cashiers editing points; here there is simply no write path |
+| D-29 | `customers.total_spent` = money actually received (checkout payment + later repayments ± edits/voids), not billed totals | consistent with loyalty (earned on money received); resolves G-12 |
+| D-30 | Global lock order: customer row → sale row → product rows (ascending id) → stock level rows; the receipt-number counter is touched last | every flow follows it, so concurrent checkouts/edits/voids cannot deadlock; verified by a 6-process opposite-order test |
+| D-31 | Idempotency: `UNIQUE(business_id, client_operation_id)` + SHA-256 of the request; the sale row is inserted BEFORE stock is touched; a replay returns the original sale (200, `meta.replayed=true`), same id with different content is 409 | safe retries and offline sync; verified with 8 parallel identical submissions |
+| D-32 | The plan's sales limit is opt-in (`ENFORCE_SALES_LIMIT`), default off; `meta.sales_limit_reached` lets clients show the source's banner | the source never blocked the till; blocking existing free-plan customers at cutover is an owner decision (G-29) |
+| D-33 | `sale_items` snapshot product name, type and unit cost | receipts and profit stay true after renames, archiving or cost changes |
+| D-34 | Money ceiling raised to ₦10bn and `Money::mulRatio` is exact for any inputs (big-number fallback) | ratio tax on very large sales multiplied two cent amounts beyond 64 bits and PHP would have silently used a float |
+| D-35 | Receipt numbers are `SALE-YYYYMMDD-NNNNNN` from a per-business counter, allocated last in the transaction | server-issued, sequential, unforgeable (S-12); the source's `SALE-<ms>-<rand>` was client-made |
+| D-36 | Repayments use the global lock order customer → sale, are append-only (no update/delete code path), idempotent by `client_operation_id` (replay returns the exact historical balances), and amount ≤ balance is checked under the locks | concurrent payments cannot exceed the balance; verified with 8 parallel processes |
+| D-37 | A debt is OPEN while the sale is `pending` and total − paid-at-till − Σ repayments ≥ 0.01; the sale flips to `completed` in the same transaction as the payment that clears it | same rule as `credit/page.tsx`, enforced atomically instead of in the browser |
+| D-38 | Statements list CREDIT sales only (cash sales never touch the account); voided sales are excluded; the closing balance always equals the live debt and the test asserts it | an account statement that disagrees with the credit list is worse than none |
+| D-39 | A customer who owes money cannot be archived (409 `customer_owes_money`) | archiving would hide a live debt |
+
+## Phase 2 additions
+* **Schema:** migrations `0002_identity` (users, user_profiles, auth_sessions, user_tokens, platform_admins) and `0003_tenancy` (businesses, locations, business_members, member_outlets, audit_logs).
+* **Layers:** Repositories (`UserRepository`, `SessionRepository`, `TenantRepository` — every tenant query takes a `business_id`) → Services (`AuthService`, `SessionService`, `BusinessService`, `StaffService`, `LocationService`, `MeService`, `AuditService`, `PlanCatalog`, `Permissions`) → thin Controllers. `Container` wires services lazily; `Lazy` defers controller construction so a request builds only what it uses.
+* **Middleware:** `auth` / `auth:optional`, `tenant` (header) / `tenant:path`, `platform_admin`, `throttle:N,S`. Contexts: `AuthContext`, `TenantContext` (carries role, effective plan, outlet restriction; `require()`, `requireFeature()`, `requireWithinLimit()`).
+* **Validation:** `Validator` is whitelist-first (`only([...])`): unknown keys and privileged keys (`role`, `plan`, `status`, `user_id`, …) produce 422 before any work happens.
+* **Endpoints implemented:** see the route table in `routes/api.php` (auth, me, sessions, businesses, staff/invites, locations, admin/stats).
+
+## Phase 3a additions
+* **Schema:** `0004_catalogue_stock` — `categories`, `products` (with `item_type`, soft-archive, virtual `barcode_live` unique key), `stock_levels` (per outlet), `stock_movements` (append-only ledger).
+* **Invariants (tested after every mutation scenario):** `products.stock_quantity = SUM(stock_levels.quantity)`; each level equals the sum of its movements.
+* **Services:** `CategoryService`, `ProductService`, `StockService` (the only writer of stock), `ProductImportService`, `HousekeepingService` (+ `bin/cron.php housekeeping`).
+* **Shared helpers:** `Pager`, `Csv` (RFC-4180 parser equal to the source's; injection-safe writer), `Validator::money/int/url`.
+
+## Phase 3b additions
+* **Schema:** `0005_customers_loyalty` — `customer_groups`, `customers` (DB column `customer_group_id`, API name `group_id`), `loyalty_settings` (defaults when no row, DB CHECKs mirror the source), append-only `loyalty_ledger`.
+* **Pure maths:** `LoyaltyMath::checkoutDiscounts` (port of `lib/loyalty/math.ts`) and `LoyaltyMath::earn` (port of SQL `loyalty_apply`), exact integer-cent arithmetic via `Money::floorDiv`.
+* **Services:** `CustomerService`, `CustomerGroupService`, `LoyaltyService` (settings, `apply`, `redeem`; both mutate only inside a transaction).
+* **Golden parity:** `tools/golden/gen_loyalty.mjs` runs the unmodified original TS and writes `tests/Golden/loyalty_checkout.json` (2,268 cases covering the 99% cap, the manual-discount error, point limits and fractional point values).
+
+## Phase 3c additions
+* **Schema:** `0006_sales` (sales, sale_items with snapshots, debt_repayments [endpoints in 3d], sale_edits, document_sequences, FK `loyalty_ledger.sale_id`), `0007_branding`.
+* **`SaleService`:** `checkout` (server computes every figure; only item ids/quantities, discount choices and payment are accepted — any price/total/tax field is a 422), `list`, `get`, `document`, `edit` (port of `edit_sale`), `void`.
+* **Pure ports with golden tests against the original TypeScript:** `Sales\EditMath` (`lib/sales/edit-math.ts`, 700 cases), `Documents\DocumentModel` + `DocumentBuilder` (`lib/documents/model.ts`, `build.ts`).
+* **Money:** ceiling ₦10bn; `Money::mulDivRound` exact big-number fallback.
+
+## Phase 3d additions
+* **Endpoints:** `POST /sales/{id}/repayments`, `GET /credit`, `GET /customers/{id}/debt`, `GET /customers/{id}/statement`, `GET /customers/{id}/sales`.
+* **`CreditService`:** repay (with payment receipt via the already-ported `DocumentBuilder::fromPayment`), grouped credit list with the source's 14/30-day badges, per-customer debt, statement with opening/closing balance. `credit.read` permission added (managers + owner, as the sidebar).
+
+## Phase 3e additions
+* **Schema:** `0008_expenses` (`expense_categories` unique per business+name; `expenses` with `expense_date` DATE, soft delete via `deleted_at/deleted_by`).
+* **Services:** `ExpenseService` (CRUD, categories, `seedDefaults`), `ProfitService` (`range`, `compute`, `report`), `DashboardService`; pure `Profit\ProfitMath` and `Profit\PeriodRange` (golden-tested against the original TS: 160 + 36 period cases).
+* **Decisions:**
+  * D-40 Expenses are soft-deleted (row kept with who/when); lists and totals ignore them. A category used by a live expense cannot be deleted (409 `category_in_use`, enforced on the server).
+  * D-41 Dashboard shows distinct named metrics: `revenue_billed` (sales totals), `revenue_collected` (cash actually received incl. repayments), `gross_profit`, `net_profit`. Revenue is never labelled profit.
+  * D-42 Dashboard credit figures come from `CreditService::totals()` — the same code as `/credit` — and a test pins them equal (fixes the source's repayment-blind dashboard).
+  * D-43 Daily series and "today" use local days in the business time zone, not UTC.
+  * D-44 Top products group by `product_id` (two products with one name stay separate); uncapped by a 200-sale window.
+  * D-45 Profit is `null` (unknown), never 0, when a period has sales but none with item details; such sales are reported separately.
+
+## Phase 3f additions
+* **Schema:** `0009_purchases` — `suppliers` (archived, never deleted), `purchase_orders` (status `draft|ordered|partially_received|received|closed|cancelled`, `outlet_id` = where stock lands, unique `(business_id, order_number)`), `purchase_order_items` (CHECK `0 <= received <= ordered`), `purchase_receipts` (`UNIQUE(business_id, client_operation_id)`), `purchase_receipt_items`.
+* **Services:** `PurchaseService`, `PurchaseRepository`, `PurchaseController`; the dashboard gains `inventory.pending_purchase_orders`.
+* **Decisions:**
+  * D-46 Receiving fixes S-08: order row locked first (then products ascending, then level rows); a delivery is bounded by what is still outstanding; quantities are added, never overwritten; whole delivery is all-or-nothing; stock only through `StockService::applyDelta` (reason `purchase`, ref = order).
+  * D-47 Receiving is idempotent: `client_operation_id` (or `Idempotency-Key`) + request hash; replay → 200 with the original receipt, same id with different content/order → 409 `idempotency_conflict`. The receipt row is inserted before stock moves.
+  * D-48 Order numbers are server-issued, gap-free per business (`PO-000001`) from `document_sequences` (kind `purchase`).
+  * D-49 Suppliers are archived (not deleted) so order history keeps its supplier. Orders are deleted only while `draft`; later they are cancelled (nothing received) or closed (part received, rest not coming).
+  * D-50 Cost price on products is changed only when the caller sets `update_cost: true` on a delivery; sales keep their remembered `unit_cost`, so profit history is never rewritten.
+  * D-51 Free-text lines (no product) can be ordered and "received" but never touch stock (as in the source).
+  * D-52 Pending = `ordered` + `partially_received` (the source counted a `sent` status that cannot exist).
+
+## Phase 3g additions
+* **Schema:** `0010_transfers` — `transfers` (status `pending|in_transit|completed|cancelled`, dispatch/receive operation ids + request hashes, `UNIQUE(business_id, …_operation_id)`, CHECK from<>to), `transfer_items` (requested / shipped / received with CHECK `received <= shipped <= requested`).
+* **Services:** `TransferService`, `TransferRepository`, `TransferController`; permission `transfers.manage` (owner, manager).
+* **Decisions:**
+  * D-53 Transfers really move stock (the source only changed a label): dispatch debits the source outlet, receive credits the destination by what arrived. Goods in transit belong to no outlet; `products.stock_quantity` drops at dispatch and is restored at receive.
+  * D-54 Shortfalls are never dropped: `variance = shipped − received` stays on the item row, in the transfer view (`variance_units`) and in the audit log. A shortfall is lost stock, not stock that reappears at the source.
+  * D-55 Dispatch and receive are idempotent per transfer (`client_operation_id` or `Idempotency-Key` + request hash, stored on the transfer row): replay → 200, same id with different content → 409 `idempotency_conflict`; a second attempt with a new id on a finished step → 409 `invalid_status`.
+  * D-56 Cancel: pending → no stock effect; in transit → shipped stock returns to the sender (`transfer_return`); completed/cancelled are final.
+  * D-57 Outlet rules: visible if either end is the user's outlet; creating/editing/dispatching needs the sending outlet (403/422 otherwise), receiving needs the destination; either end may cancel.
+  * D-58 Lock order: transfer row → product rows (ascending id) → level rows, so opposite-direction transfers cannot deadlock (tested).
+  * D-59 No approval step (listed as optional in the brief; absent in the source) — see G-45.
+
+## Phase 3h additions
+* **Services:** `ReportService`, `ReportController`; new read queries in `ReportRepository` (`salesReport`, `purchasesReport`, `outlets`). No new tables.
+* **Endpoints:** `GET /reports` (what this user may run) and `GET /reports/{sales|profit|inventory|expenses|credit|purchases|outlets|products}`.
+* **Decisions:**
+  * D-60 Reports are views over existing code: profit via `ProfitService::compute`, expenses via `ExpenseService::list`, credit via `CreditService::list`, inventory totals equal `/stock/valuation` and the dashboard counts. There is never a second definition of a number (tests pin each pair).
+  * D-61 JSON is paged (`page`, `per_page`); `format=csv` returns the whole report (cap 50,000 rows → 413 `range_too_large`), UTF-8 BOM, RFC-4180 quoting, text cells formula-injection-safe. CSV is plan-gated `exportReports` (as in the source); JSON is not.
+  * D-62 Periods and displayed times use the business time zone; `period` or `from`+`to` as on `/profit`. Inventory and credit are point-in-time and reject period filters.
+  * D-63 Voided sales are listed in the sales report but excluded from every total; draft/cancelled purchase orders are excluded from commitments.
+  * D-64 Outlets report: per-outlet figures plus business totals; expenses without an outlet are shown as `unallocated_expenses` (never silently dropped), visible only to unrestricted users.
+  * D-65 Inventory report uses the dashboard rule: low = 0 < stock <= reorder level; totals cover active stocked items.
+
+## Phase 3i additions (account lifecycle) and gap fixes
+* **Schema:** `0011_account_lifecycle` (users: `must_change_password`, `deletion_requested_at`, `deletion_scheduled_at`, `anonymised_at`), `0012_supplier_payments`.
+* **Services:** `AccountService` (export, deletion request/cancel, purge job), `MeService` avatar methods, `StaffService::setOutlets`, `PurchaseService::pay/supplierStatement`, `Documents\PdfRenderer`, `Mail\SmtpMailer`.
+* **Decisions:**
+  * D-66 Account deletion = request (password + typed phrase) → sign-in disabled and sessions revoked → 14-day grace (cancel with e-mail + password) → `cron purge-accounts` deletes the person's own businesses and all their data, removes their memberships elsewhere, and **anonymises** the user row (kept, blank) because `sales.user_id` and audit actors reference it. The e-mail address becomes reusable.
+  * D-67 `AccountService::PURGE_ORDER` must list every table with a `business_id`; `AccountTest` fails if a new table is added without it (and without an export section).
+  * D-68 An owner whose business still has team members cannot delete their account (no ownership transfer yet — G-52).
+  * D-69 Legacy-password policy (G-21): sign-in is never blocked; weak migrated passwords raise `must_change_password`, cleared by a real password change (a silent re-hash of the same password does not clear it).
+  * D-70 Exports are paged by section (1,000 rows) and owner-only; personal export excludes every secret hash.
+  * D-71 Avatars: the image type is decided from the bytes (JPEG/PNG/WebP, 16–4096 px, ≤1 MB), stored outside the web root under a random name, served with `nosniff`.
+  * D-72 A filter naming a foreign or non-existent outlet is 404 everywhere (never an empty 200).
+  * D-73 Supplier payments are bounded by received-and-unpaid value per order, row-locked with the order, idempotent, immutable; they are not expenses.
+  * D-74 PDF documents are produced without any library (Courier, A4, paginated); SMTP without any library (sockets).
+
+## Phase 3j additions (billing)
+* **Schema:** `0013_billing` — `payments` (server-created, amount/plan/cycle fixed at creation; `business_id` FK `ON DELETE SET NULL` so the accounting record survives a deleted business), `webhook_events` (hash of the raw body, never the body).
+* **Code:** `Billing\PriceTable` (exact integer port of the source prices; 48 golden cases), `Billing\PaymentGateway` + `PaystackGateway` (curl, https only), `BillingService`, `BillingRepository`, `BillingController`; `cron expire-plans`.
+* **Decisions:**
+  * D-75 **Closes audit S-04 and S-06.** A plan is granted only when a payment row the SERVER created is confirmed — by us asking Paystack (`POST /billing/verify`) or by a correctly signed webhook — for exactly that amount and currency. Request bodies and webhook metadata can name neither plan, amount, business nor expiry.
+  * D-76 One idempotent, row-locked `settle()` serves both paths; a second confirmation of a settled payment changes nothing and sends nothing (tested with 8 concurrent deliveries).
+  * D-77 Webhook: signature over the RAW body (HMAC-SHA512, constant time); distinct deliveries recorded by body hash, identical redeliveries acknowledged; unknown references recorded and ignored; always 200 once the signature is valid (no retry storms), 401 on a bad signature, 503 if unconfigured.
+  * D-78 Provider mismatch (amount, currency, reference) marks the payment `failed` with a reason and audits it; no plan is granted.
+  * D-79 Renewal of the running plan extends from its expiry; any other purchase starts now; downgrades are refused while a dearer plan runs (G-58/G-59).
+  * D-80 Payment records are retained pseudonymised after account deletion and expire after `PAYMENT_RETENTION_YEARS` (G-54).
+
+## Phase 3k additions (platform administration)
+* **Schema:** `0014_platform_notices`. **Code:** `AdminService`, `AdminController` (replaces the Phase 2 stub), `AccountService::scheduleDeletion/purgeBusiness` (shared with self-service), `bin/make-admin.php --revoke/--list`.
+* **Decisions:**
+  * D-81 `/admin/*` is the only cross-tenant read/write surface. It sits behind `platform_admin` (a row in `platform_admins`, checked per request; others get 404, even if they are owners of businesses) and admin rights open no tenant route.
+  * D-82 Every admin write needs a written reason (5–300 chars) and is audited with before/after and the actor. Destructive writes (plan, status, delete business, disable/delete user) additionally re-check the admin's own password (step-up; wrong attempts are audited and rate-limited).
+  * D-83 A paid plan set by hand must have an expiry (≤5 years); `free` has none. Business deletion needs the exact business name; it reuses the audited purge used for account deletion (payments are kept, pseudonymised).
+  * D-84 Admin cannot act on admins or themselves; disabling a user revokes sessions and re-enabling does not revive them.
+  * D-85 Platform notices are visible to all signed-in users through `GET /notices` (most urgent first; no author id leaked).
+
+## Phase 3l additions (settings, scheduled jobs, reconciliation)
+* **Schema:** `0015_ops` (`stock_alert_settings`, `job_runs`). **Code:** `StockAlertService`, `ReconciliationService`, `JobService`, `MeService::preferences`, `bin/cron.php` rewritten around a job registry.
+* **Decisions:**
+  * D-86 Cron contract: `php bin/cron.php list|<job>`; one run per job at a time (exclusive lock file; an overlapping tick exits quietly with code 0); every run recorded in `job_runs`; exit codes 0 ok/skipped, 1 failed, 2 usage, 4 findings. A run stuck "running" for over an hour shows as `crashed`; a job past its expected interval is flagged `attention`.
+  * D-87 Reconciliation is read-only and reports ids and counts only (no names or amounts); findings are e-mailed to platform admins and visible at `GET /admin/jobs/reconcile`. Finding drift is a result (job `ok`, exit 4), not a job failure.
+  * D-88 Low-stock alerts use the same rule as the dashboard and reports (active stocked product with stock ≤ reorder level); a mail counts as sent only when there was something to report; test mails are rate-limited; owners who are disabled or pending deletion are skipped.
+  * D-89 Per-person preferences (`notifications`, `language`, `privacy`) are stored on the profile, validated strictly (booleans only, language code pattern) and merged over defaults; malformed stored data never reaches a client.
+  * D-90 `GET /admin/health` reports facts about the host and configuration without secrets, so the operator can verify a Truehost setup instead of assuming it.
+
+## Phase 4 additions (offline sync, server side)
+* **Schema:** `0016_sync` (`sync_operations`). **Code:** `Sync\SyncService` (push, inbox, retry/accept-prices/discard), `Sync\SyncPullService`, `SyncController`; small hooks in `SaleService::checkout` (`expected_total`, internal occurred-at), `StockService::adjust` (idempotent by operation id), `CustomerService/ExpenseService::create` (client-chosen id), `CustomerRepository::adjustStats` (last visit never moves backwards). Contract: `docs/14_SYNC_PROTOCOL.md`.
+* **Decisions:**
+  * D-91 Sync applies every operation through the same services as the online API, so no rule exists twice. The ledger is a cache of outcomes and an inbox, not the source of truth: each operation type is also idempotent in its own table (sale/repayment by operation id, new records by client-chosen id, stock adjustment by movement reference), so losing a ledger row is harmless (tested by deleting the ledger and re-sending).
+  * D-92 Outcomes: applied · conflict (may succeed later) · rejected (will not as sent) · discarded (manager gave up) · error (nothing recorded, send again). Applied/rejected/discarded are remembered; conflict is retried on every re-send.
+  * D-93 Identity of an operation is a hash of its type and canonicalised payload (key order irrelevant); a manager's change to a stored payload (accept-prices) does not change that identity.
+  * D-94 Time: client time is corrected by the measured device clock error, never in the future, never older than 60 days; the sale is dated when it happened and numbered when it arrives.
+  * D-95 Conflict inbox: managers see everyone's, others only their own; retry runs as the original cashier (their role, their sale); discard needs a reason and keeps the record.
+  * D-96 Pull is per-resource and keyset-paged; exhausted resources return an exact cursor when idle and a 10-second rewind when changes are recent; tombstones are `archived_at` (products, customers), `is_active` (outlets) and `reference_ids` (categories, groups).
+  * D-97 Cost prices are never pulled by users who may not read them; restricted users pull only their outlets' stock and outlets.
+  * D-98 Flutter local database: the plain `sqlite3` package with hand-written, versioned migrations (`PRAGMA user_version`) instead of drift. Reason: the schema is small, the sync engine needs exact control of transactions and upserts, and no code generation keeps the build simple on five platforms. Revisit if the schema grows past ~20 tables.
+  * D-99 Money on the device is integer minor units (`Cents`); the checkout maths is a port of the server's and is verified against the same golden vectors. The device shows provisional figures; the server records the real ones.
+  * D-100 Offline stock: displayed available = server quantity − quantity promised in queued sales on this device. Promises are released when an operation is rejected/discarded and forgotten once a pull after its success includes the server's new number.
+  * D-101 Tokens: only the refresh token (and chosen business, device id) are persisted, in the platform keychain/keystore; the short-lived access token lives in memory. Renewal is single-flight (one refresh however many requests notice the expiry) and a network error during renewal is never treated as being signed out.
+  * D-102 One SQLite file per user per business; sign-out keeps it so queued sales survive; a sale is never dropped by the app, only by a manager's discard on the server.
+  * D-103 The sync engine sends each operation at most once per run, backs off conflicts/errors (5 s, 15 s, 1 min, 5 min, 15 min, 1 h), stores pull cursors only when a whole download finishes, and does a full resync daily (the incremental cursors cannot see rows made inaccessible by role/outlet changes).
