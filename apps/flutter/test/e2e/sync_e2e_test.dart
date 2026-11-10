@@ -283,4 +283,33 @@ void main() {
     await expectLater(owner.post('/staff', body: {'name': 'Cashier One', 'email': 'c1@example.test', 'role': 'cashier'}), throwsA(isA<ApiException>().having((e) => e.code, 'code', 'feature_not_in_plan').having((e) => e.message, 'message', isNotEmpty)));
     expect(((await owner.get('/staff')).data as List).single['role'], 'owner', reason: 'the team list itself is readable');
   });
+
+  test('settings: a new tax rate and loyalty settings reach the till through sync and change its totals; alerts, password and sessions behave', () async {
+    await engine.run();
+    expect(CartSettings.fromSettings(db.metaJson('settings')).taxRateBp, 0);
+    final biz = await data(owner.get('/businesses/$bid'));
+    for (final k in ['id', 'name', 'currency', 'tax_rate', 'effective_plan']) {
+      expect(biz.containsKey(k), isTrue, reason: 'the settings screen reads $k');
+    }
+    await owner.send('PATCH', '/businesses/$bid', body: {'name': '${biz['name']}', 'tax_rate': '7.5'});
+    final loy = await data(owner.get('/businesses/$bid/loyalty-settings'));
+    expect(loy.keys, containsAll(['enabled', 'spend_per_point', 'point_value']));
+    await owner.send('PUT', '/businesses/$bid/loyalty-settings', body: {'enabled': true, 'spend_per_point': '100.00', 'point_value': '1.00'});
+    await engine.run();
+    final cs = CartSettings.fromSettings(db.metaJson('settings'));
+    expect(cs.taxRateBp, 750, reason: 'the pull delivered the new tax rate');
+    expect((cs.loyaltyEnabled, cs.pointValue), (true, 100));
+    final cart = Cart(cs)..add(productId: pA, name: 'Soap', unitPrice: 10000, tracksStock: false, available: 0);
+    expect(cart.total, 10750, reason: '100.00 + 7.5% tax');
+
+    final alert = await data(owner.get('/businesses/$bid/alert-settings'));
+    expect(alert.keys, containsAll(['enabled', 'email', 'default_email', 'frequency']));
+    await owner.send('PUT', '/businesses/$bid/alert-settings', body: {'enabled': true, 'frequency': 'hourly', 'email': alert['default_email']});
+    await expectLater(owner.send('PUT', '/businesses/$bid/alert-settings', body: {'enabled': true, 'frequency': 'hourly', 'email': null}), throwsA(isA<ApiException>().having((e) => e.status, 'status', 422)), reason: 'enabling alerts needs a spelled-out address (the screen pre-fills it)');
+    expect((await data(owner.get('/businesses/$bid/alert-settings')))['frequency'], 'hourly');
+
+    final sessions = ((await owner.get('/me/sessions')).data as List).cast<Map<String, dynamic>>();
+    expect(sessions.where((x) => x['current'] == true), hasLength(1), reason: 'exactly one session is marked as this device');
+    await expectLater(owner.post('/me/change-password', body: {'current_password': 'definitely-wrong', 'new_password': 'Another-Good-Pass-88'}), throwsA(isA<ApiException>().having((e) => e.message, 'message', isNotEmpty)));
+  });
 }

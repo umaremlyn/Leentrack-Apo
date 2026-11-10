@@ -32,6 +32,8 @@ class FakeServer implements HttpClientAdapter {
   final voidReasons = <String>[];
   final staffCalls = <String>[];
   String staffRole = 'cashier';
+  final settingsCalls = <String>[];
+  bool otherSessionAlive = true;
 
   final reportQueries = <Map<String, dynamic>>[];
   ResponseBody _ok(Object data, {Map<String, dynamic> meta = const {}}) => ResponseBody.fromString(jsonEncode({'ok': true, 'data': data, 'meta': meta}), 200, headers: {Headers.contentTypeHeader: ['application/json']});
@@ -70,6 +72,29 @@ class FakeServer implements HttpClientAdapter {
         });
       case '/sync/operations':
         return _ok([]);
+      case '/businesses/b1':
+        if (o.method == 'PATCH') settingsCalls.add('biz:${jsonEncode(o.data)}');
+        return _ok({'id': 'b1', 'name': 'Shop One', 'currency': 'NGN', 'tax_rate': '0.00', 'effective_plan': 'free'});
+      case '/businesses/b1/loyalty-settings':
+        if (o.method == 'PUT') settingsCalls.add('loyalty:${jsonEncode(o.data)}');
+        return _ok({'enabled': false, 'spend_per_point': '10000.00', 'point_value': '100.00', 'is_default': true});
+      case '/businesses/b1/alert-settings':
+        if (o.method == 'PUT') settingsCalls.add('alert:${jsonEncode(o.data)}');
+        return _ok({'enabled': false, 'email': null, 'default_email': 'ada@x.com', 'frequency': 'daily'});
+      case '/me/change-password':
+        final b = o.data as Map;
+        if (b['current_password'] != 'right') return _err(422, 'invalid_credentials', 'Your current password is wrong.');
+        settingsCalls.add('pw');
+        return _ok({});
+      case '/me/sessions':
+        return _ok([
+          {'id': 'cur', 'device_name': 'LeenTrack linux', 'platform': 'linux', 'last_used_at': 'now', 'current': true},
+          if (otherSessionAlive) {'id': 'old', 'device_name': 'Old phone', 'platform': 'android', 'last_used_at': 'yesterday', 'current': false},
+        ]);
+      case '/me/sessions/old':
+        otherSessionAlive = false;
+        settingsCalls.add('revoke');
+        return _ok({});
       case '/sales/s1':
         return _ok({
           'id': 's1', 'receipt_number': 'R-0001', 'status': saleVoided ? 'voided' : 'completed', 'cashier_name': 'Ada', 'outlet_name': 'Main', 'customer': null,
@@ -569,5 +594,86 @@ void main() {
     await boot(t, role: 'manager');
     await signIn(t);
     expect(find.byKey(const Key('nav-staff')), findsNothing);
+  });
+
+  testWidgets('settings: the owner changes the tax rate (validated first), loyalty and alerts; a cashier only sees the business read-only', (t) async {
+    final (server, _) = await boot(t, role: 'owner');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('open-settings')));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('biz-tax')), '150');
+    await t.tap(find.byKey(const Key('biz-save')));
+    await t.pumpAndSettle();
+    expect(find.textContaining('between 0 and 100'), findsOneWidget);
+    expect(server.settingsCalls, isEmpty);
+    await t.pump(const Duration(seconds: 7));
+    await t.enterText(find.byKey(const Key('biz-tax')), '7.5');
+    await t.tap(find.byKey(const Key('biz-save')));
+    await t.pumpAndSettle();
+    expect(server.settingsCalls.single, 'biz:{"name":"Shop One","tax_rate":"7.5"}');
+    await t.pump(const Duration(seconds: 7));
+    await t.ensureVisible(find.byKey(const Key('loyalty-save')));
+    await t.tap(find.byKey(const Key('loyalty-on')));
+    await t.tap(find.byKey(const Key('loyalty-save')));
+    await t.pumpAndSettle();
+    expect(server.settingsCalls.last, 'loyalty:{"enabled":true,"spend_per_point":"10000.00","point_value":"100.00"}');
+    await t.pump(const Duration(seconds: 7));
+    await t.ensureVisible(find.byKey(const Key('alert-email')));
+    expect(find.widgetWithText(TextField, 'ada@x.com'), findsOneWidget, reason: 'the address alerts will go to is shown, not hidden');
+    await t.ensureVisible(find.byKey(const Key('alert-on')));
+    await t.tap(find.byKey(const Key('alert-on')));
+    await t.enterText(find.byKey(const Key('alert-email')), 'not-an-address');
+    await t.ensureVisible(find.byKey(const Key('alert-save')));
+    await t.tap(find.byKey(const Key('alert-save')));
+    await t.pumpAndSettle();
+    expect(find.textContaining('address the alerts should go to'), findsOneWidget);
+    expect(server.settingsCalls.last.startsWith('alert:'), isFalse, reason: 'nothing is sent with a bad address');
+    await t.pump(const Duration(seconds: 7));
+    await t.enterText(find.byKey(const Key('alert-email')), 'owner@x.com');
+    await t.tap(find.byKey(const Key('alert-save')));
+    await t.pumpAndSettle();
+    expect(server.settingsCalls.last, 'alert:{"enabled":true,"frequency":"daily","email":"owner@x.com"}');
+  });
+
+  testWidgets('settings: a cashier sees the business read-only and no loyalty or alert cards', (t) async {
+    await boot(t, role: 'cashier');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('open-settings')));
+    await t.pumpAndSettle();
+    expect(find.byKey(const Key('biz-save')), findsNothing);
+    expect(find.byKey(const Key('loyalty-save')), findsNothing);
+    expect(find.byKey(const Key('alert-save')), findsNothing);
+    expect(find.byKey(const Key('change-password')), findsOneWidget);
+  });
+
+  testWidgets('account: a wrong current password shows the server message; a right one succeeds; another device can be signed out, this one cannot', (t) async {
+    final (server, _) = await boot(t, role: 'cashier');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('open-settings')));
+    await t.pumpAndSettle();
+    expect(find.byKey(const Key('revoke-cur')), findsNothing);
+    await t.ensureVisible(find.byKey(const Key('change-password')));
+    await t.tap(find.byKey(const Key('change-password')));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('pw-current')), 'nope');
+    await t.enterText(find.byKey(const Key('pw-new')), 'Brand-New-Pass-77');
+    await t.tap(find.byKey(const Key('pw-save')));
+    await t.pumpAndSettle();
+    expect(find.text('Your current password is wrong.'), findsOneWidget);
+    expect(server.settingsCalls, isEmpty);
+    await t.pump(const Duration(seconds: 7));
+    await t.tap(find.byKey(const Key('change-password')));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('pw-current')), 'right');
+    await t.enterText(find.byKey(const Key('pw-new')), 'Brand-New-Pass-77');
+    await t.tap(find.byKey(const Key('pw-save')));
+    await t.pumpAndSettle();
+    expect(server.settingsCalls, ['pw']);
+    await t.pump(const Duration(seconds: 7));
+    await t.ensureVisible(find.byKey(const Key('revoke-old')));
+    await t.tap(find.byKey(const Key('revoke-old')));
+    await t.pumpAndSettle();
+    expect(server.settingsCalls.last, 'revoke');
+    expect(find.byKey(const Key('session-old')), findsNothing);
   });
 }

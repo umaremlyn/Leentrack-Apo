@@ -12,6 +12,7 @@ import '../reports/reports_screen.dart';
 import '../inventory/inventory_screen.dart';
 import '../pos/pos_screen.dart';
 import '../sales/sales_screen.dart';
+import '../settings/settings_screen.dart';
 import '../staff/staff_screen.dart';
 import '../sync/sync_screen.dart';
 
@@ -42,6 +43,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             child: Row(children: [
               Expanded(child: Text('${w.membership.name} · ${w.role}', style: Theme.of(context).textTheme.titleSmall, overflow: TextOverflow.ellipsis)),
               if ((app.user?.memberships.length ?? 0) > 1) IconButton(tooltip: 'Switch business', icon: const Icon(Icons.swap_horiz), onPressed: () => ref.read(sessionProvider.notifier).switchBusiness()),
+              IconButton(key: const Key('open-settings'), tooltip: 'Settings', icon: const Icon(Icons.settings_outlined), onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()))),
               IconButton(key: const Key('logout'), tooltip: 'Sign out', icon: const Icon(Icons.logout), onPressed: () => ref.read(sessionProvider.notifier).logout()),
             ]),
           ),
