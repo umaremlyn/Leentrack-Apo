@@ -25,6 +25,9 @@ class FakeServer implements HttpClientAdapter {
   final expensesPosted = <Map<String, dynamic>>[];
   final deleted = <String>[];
   int balance = 25000;
+  final poCalls = <String>[];
+  Map<String, dynamic>? lastReceive;
+  String poStatus = 'ordered';
 
   final reportQueries = <Map<String, dynamic>>[];
   ResponseBody _ok(Object data, {Map<String, dynamic> meta = const {}}) => ResponseBody.fromString(jsonEncode({'ok': true, 'data': data, 'meta': meta}), 200, headers: {Headers.contentTypeHeader: ['application/json']});
@@ -63,6 +66,32 @@ class FakeServer implements HttpClientAdapter {
         });
       case '/sync/operations':
         return _ok([]);
+      case '/purchase-orders':
+        if (o.method == 'POST') {
+          poCalls.add('create');
+          lastReceive = null;
+          return _ok({'id': 'po2'});
+        }
+        return _ok([{'id': 'po1', 'order_number': 'PO-000001', 'status': poStatus, 'supplier_name': 'Acme Ltd', 'total_cost': '550.00', 'item_count': 1}], meta: {});
+      case '/purchase-orders/po1':
+        return _ok({
+          'id': 'po1', 'order_number': 'PO-000001', 'status': poStatus, 'supplier_name': 'Acme Ltd', 'outlet_name': 'Main', 'total_cost': '550.00', 'received_value': '0.00', 'paid': '0.00', 'balance_due': '0.00',
+          'items': [{'id': 'it1', 'product_name': 'Soap', 'quantity_ordered': 10, 'quantity_received': 0, 'outstanding': 10, 'line_total': '550.00'}],
+        });
+      case '/purchase-orders/po1/receive':
+        lastReceive = o.data as Map<String, dynamic>;
+        poStatus = 'partially_received';
+        return _ok({'receipt_id': 'rc1'});
+      case '/purchase-orders/po1/cancel':
+        poCalls.add('cancel');
+        poStatus = 'cancelled';
+        return _ok({});
+      case '/suppliers':
+        if (o.method == 'POST') {
+          poCalls.add('supplier:${(o.data as Map)['name']}');
+          return _ok({'id': 'sp2'});
+        }
+        return _ok([{'id': 'sp1', 'name': 'Acme Ltd', 'phone': '0803', 'open_orders': 1, 'balance_owed': '120.00'}], meta: {});
       case '/credit':
         return _ok([
           {
@@ -376,5 +405,64 @@ void main() {
     await t.tap(find.text('Retry'));
     await t.pumpAndSettle();
     expect(find.text('Owed in total: 250.00'), findsOneWidget);
+  });
+
+  testWidgets('purchases: orders and suppliers are listed; receiving checks quantities and sends one retry-safe receipt', (t) async {
+    final (server, _) = await boot(t, role: 'owner');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-purchases')));
+    await t.pumpAndSettle();
+    expect(find.textContaining('PO-000001 · Acme Ltd'), findsOneWidget);
+    await t.tap(find.byKey(const Key('po-po1')));
+    await t.pumpAndSettle();
+    expect(find.text('Ordered · into Main'), findsOneWidget);
+    await t.tap(find.byKey(const Key('po-receive')));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('recv-it1')), '11'); // more than outstanding
+    await t.tap(find.byKey(const Key('recv-confirm')));
+    await t.pumpAndSettle();
+    expect(find.textContaining('between 0 and what is outstanding'), findsOneWidget);
+    expect(server.lastReceive, isNull);
+    await t.enterText(find.byKey(const Key('recv-it1')), '4');
+    await t.tap(find.byKey(const Key('recv-confirm')));
+    await t.pumpAndSettle();
+    expect(server.lastReceive!['items'], [{'item_id': 'it1', 'quantity': 4}]);
+    expect(server.lastReceive!['client_operation_id'], isNotEmpty);
+    expect(find.text('Partly received · into Main'), findsOneWidget);
+    // back to the list, then the suppliers tab
+    await t.pageBack();
+    await t.pumpAndSettle();
+    await t.tap(find.text('Suppliers'));
+    await t.pump(const Duration(seconds: 7)); // let the "Stock received" message go away; it covers the button
+    await t.pumpAndSettle();
+    expect(find.text('Owed 120.00'), findsOneWidget);
+    await t.tap(find.byKey(const Key('new-supplier')));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('supplier-name')), 'Fresh Foods');
+    await t.tap(find.byKey(const Key('supplier-save')));
+    await t.pumpAndSettle();
+    expect(server.poCalls, contains('supplier:Fresh Foods'));
+  });
+
+  testWidgets('purchases: cancelling asks first and a cashier cannot reach the screen', (t) async {
+    final (server, _) = await boot(t, role: 'owner');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-purchases')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('po-po1')));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Cancel order'));
+    await t.pumpAndSettle();
+    expect(server.poCalls, isNot(contains('cancel')), reason: 'nothing happens until the owner confirms');
+    await t.tap(find.byKey(const Key('confirm-yes')));
+    await t.pumpAndSettle();
+    expect(server.poCalls, contains('cancel'));
+    expect(find.text('Cancelled · into Main'), findsOneWidget);
+  });
+
+  testWidgets('a cashier has no Purchases entry', (t) async {
+    await boot(t, role: 'cashier');
+    await signIn(t);
+    expect(find.byKey(const Key('nav-purchases')), findsNothing);
   });
 }

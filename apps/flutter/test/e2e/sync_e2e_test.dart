@@ -219,4 +219,39 @@ void main() {
     final dash = (await owner.get('/dashboard')).data as Map;
     expect((dash['metrics'] as Map).keys, containsAll(['revenue_billed', 'revenue_collected', 'expenses', 'gross_profit', 'net_profit', 'transactions']));
   });
+
+  test('purchasing: supplier, order, place, receive (stock arrives once even if sent twice), pay, and the device sees the new stock', () async {
+    final sup = await data(owner.post('/suppliers', body: {'name': 'Acme Ltd', 'phone': '0803'}));
+    final po = await data(owner.post('/purchase-orders', body: {
+      'supplier_id': sup['id'],
+      'items': [{'product_id': pA, 'quantity': 10, 'unit_cost': '55.00'}],
+    }));
+    expect(po['status'], 'draft');
+    await owner.post('/purchase-orders/${po['id']}/order');
+    final detail = await data(owner.get('/purchase-orders/${po['id']}'));
+    final item = (detail['items'] as List).cast<Map<String, dynamic>>().single;
+    for (final k in ['id', 'product_name', 'quantity_ordered', 'quantity_received', 'outstanding', 'line_total']) {
+      expect(item.containsKey(k), isTrue, reason: 'the order screen reads $k');
+    }
+    for (final k in ['order_number', 'status', 'supplier_name', 'outlet_name', 'total_cost', 'received_value', 'paid', 'balance_due']) {
+      expect(detail.containsKey(k), isTrue, reason: 'the order screen reads $k');
+    }
+    await engine.run();
+    final before = db.available(pA, locationId);
+    final body = {'client_operation_id': uuid.v4(), 'items': [{'item_id': item['id'], 'quantity': 4}]};
+    await owner.post('/purchase-orders/${po['id']}/receive', body: body);
+    await owner.post('/purchase-orders/${po['id']}/receive', body: body); // the same press sent twice
+    await engine.run();
+    expect(db.available(pA, locationId), before + 4, reason: 'four units arrived once, not eight');
+    final after = await data(owner.get('/purchase-orders/${po['id']}'));
+    expect(after['status'], 'partially_received');
+    expect(Cents.parse('${after['balance_due']}'), 22000, reason: '4 x 55.00 received, nothing paid yet');
+    final payOp = uuid.v4();
+    final pay = {'amount': '100.00', 'method': 'cash', 'client_operation_id': payOp};
+    await owner.post('/purchase-orders/${po['id']}/payments', body: pay);
+    await owner.post('/purchase-orders/${po['id']}/payments', body: pay);
+    expect(Cents.parse('${(await data(owner.get('/purchase-orders/${po['id']}')))['balance_due']}'), 12000, reason: 'one payment of 100.00');
+    final sups = ((await owner.get('/suppliers')).data as List).cast<Map<String, dynamic>>().firstWhere((s) => s['id'] == sup['id']);
+    expect(Cents.parse('${sups['balance_owed']}'), 12000);
+  });
 }

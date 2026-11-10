@@ -86,3 +86,14 @@ Create the first operator after registering normally through the app: `php bin/m
 | daily 03:30 | `cron.php reconcile` | read-only audit; exit code 4 + e-mail to admins when something does not add up |
 
 Overlapping runs are impossible (lock files in `LOCK_DIR`, default `backend/storage/locks`, must be writable). After the first day open `GET /admin/jobs` and `GET /admin/health` as the platform admin: every job should show a recent `ok` run and the health report should have no `fail`.
+
+
+## Common first-deploy mistakes (seen in practice)
+* **Secrets in `config/app.php` defaults.** Never put passwords or keys as the second argument of `Env::get(...)`: that file is in git. Put them in the `.env` (outside the web root, `chmod 600`) and leave the defaults empty. If a secret was ever committed or pasted anywhere, change it.
+* **A typo in `config/app.php` gives an empty HTTP 500.** Check with `php -l config/app.php` before uploading.
+* **`APP_URL` / `WEB_URL` need the scheme**, e.g. `https://api.example.com` (not `api.example.com`). `WEB_URL` is the *web app*, not the API (it is used in e-mailed links).
+* **`CORS_ALLOWED_ORIGINS` needs the scheme** and is compared exactly: `https://app.example.com` (no spaces needed, no wildcard). Mobile/desktop apps do not use CORS; only browsers do.
+* **SMTP port and mode must match:** port 465 = `SMTP_SECURE=ssl`; port 587 = `SMTP_SECURE=tls` (STARTTLS). `SMTP_HOST` is the mail server (often `mail.<domain>`), not the app's address.
+* **Use a Paystack TEST key (`sk_test_...`) on staging.** A live key makes staging charge real cards.
+* **The app's `API_BASE_URL` / `STAGING_API_URL` must be the full API root** including `/api/v1`, no trailing slash: `https://api.example.com/api/v1`.
+* Smoke check from any computer with Dart: `dart run apps/flutter/tool/live_check.dart https://api.example.com/api/v1` (expects health 200, `db: ok`).

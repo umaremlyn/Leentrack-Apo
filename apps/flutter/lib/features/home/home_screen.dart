@@ -7,6 +7,7 @@ import '../credit/credit_screen.dart';
 import '../customers/customers_screen.dart';
 import '../dashboard/dashboard_screen.dart';
 import '../expenses/expenses_screen.dart';
+import '../purchases/purchases_screen.dart';
 import '../reports/reports_screen.dart';
 import '../inventory/inventory_screen.dart';
 import '../pos/pos_screen.dart';
@@ -56,6 +57,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         'inventory' => const InventoryScreen(),
         'sales' => const SalesScreen(),
         'dashboard' => const DashboardScreen(),
+        'purchases' => const PurchasesScreen(),
         'credit' => const CreditScreen(),
         'expenses' => const ExpensesScreen(),
         'reports' => const ReportsScreen(),
