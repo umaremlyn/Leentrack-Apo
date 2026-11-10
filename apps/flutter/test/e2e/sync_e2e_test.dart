@@ -12,6 +12,7 @@ import 'package:leentrack/data/local_db.dart';
 import 'package:leentrack/features/pos/cart.dart';
 import 'package:leentrack/features/pos/pos_service.dart';
 import 'package:leentrack/network/api_client.dart';
+import 'package:leentrack/network/api_exception.dart';
 import 'package:leentrack/sync/sync_api.dart';
 import 'package:leentrack/sync/sync_engine.dart';
 import 'package:uuid/uuid.dart';
@@ -253,5 +254,33 @@ void main() {
     expect(Cents.parse('${(await data(owner.get('/purchase-orders/${po['id']}')))['balance_due']}'), 12000, reason: 'one payment of 100.00');
     final sups = ((await owner.get('/suppliers')).data as List).cast<Map<String, dynamic>>().firstWhere((s) => s['id'] == sup['id']);
     expect(Cents.parse('${sups['balance_owed']}'), 12000);
+  });
+
+  test('voiding a sale restores the stock the device sees, refuses a second void, and a plan without staff explains itself', () async {
+    await engine.run();
+    final before = db.available(pB, locationId);
+    await owner.post('/stock/adjustments', body: {'product_id': pB, 'location_id': locationId, 'delta': 3, 'reason': 'found'});
+    final sale = await data(owner.post('/sales', body: {
+      'client_operation_id': uuid.v4(),
+      'outlet_id': locationId,
+      'items': [{'product_id': pB, 'quantity': 2}],
+      'payment': {'mode': 'full', 'method': 'cash', 'amount': '501.00'},
+    }));
+    final detail = await data(owner.get('/sales/${sale['id']}'));
+    for (final k in ['receipt_number', 'status', 'cashier_name', 'outlet_name', 'items', 'subtotal', 'total_amount', 'paid_so_far', 'balance_due', 'voided_at', 'void_reason']) {
+      expect(detail.containsKey(k), isTrue, reason: 'the sale page reads $k');
+    }
+    expect((detail['items'] as List).first, allOf(contains('name'), contains('quantity'), contains('unit_price'), contains('total_price')));
+    await engine.run();
+    expect(db.available(pB, locationId), before + 3 - 2);
+    final v = await data(owner.post('/sales/${sale['id']}/void', body: {'reason': 'Customer returned goods'}));
+    expect(Cents.parse('${v['refund_due']}'), 50100);
+    await engine.run();
+    expect(db.available(pB, locationId), before + 3, reason: 'the two units are back on the shelf');
+    await expectLater(owner.post('/sales/${sale['id']}/void', body: {'reason': 'again'}), throwsA(isA<ApiException>().having((e) => e.status, 'status', 409)));
+    expect(db.available(pB, locationId), before + 3, reason: 'a second void changed nothing');
+    // free plan: the server's own message is what the Staff screen shows
+    await expectLater(owner.post('/staff', body: {'name': 'Cashier One', 'email': 'c1@example.test', 'role': 'cashier'}), throwsA(isA<ApiException>().having((e) => e.code, 'code', 'feature_not_in_plan').having((e) => e.message, 'message', isNotEmpty)));
+    expect(((await owner.get('/staff')).data as List).single['role'], 'owner', reason: 'the team list itself is readable');
   });
 }

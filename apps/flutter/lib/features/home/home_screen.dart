@@ -12,6 +12,7 @@ import '../reports/reports_screen.dart';
 import '../inventory/inventory_screen.dart';
 import '../pos/pos_screen.dart';
 import '../sales/sales_screen.dart';
+import '../staff/staff_screen.dart';
 import '../sync/sync_screen.dart';
 
 /// The signed-in app: real role from the membership, the sync bar on top, the offline-capable screens wired in.
@@ -58,6 +59,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         'sales' => const SalesScreen(),
         'dashboard' => const DashboardScreen(),
         'purchases' => const PurchasesScreen(),
+        'staff' => const StaffScreen(),
         'credit' => const CreditScreen(),
         'expenses' => const ExpensesScreen(),
         'reports' => const ReportsScreen(),

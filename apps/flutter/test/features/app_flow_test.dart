@@ -28,6 +28,10 @@ class FakeServer implements HttpClientAdapter {
   final poCalls = <String>[];
   Map<String, dynamic>? lastReceive;
   String poStatus = 'ordered';
+  bool saleVoided = false;
+  final voidReasons = <String>[];
+  final staffCalls = <String>[];
+  String staffRole = 'cashier';
 
   final reportQueries = <Map<String, dynamic>>[];
   ResponseBody _ok(Object data, {Map<String, dynamic> meta = const {}}) => ResponseBody.fromString(jsonEncode({'ok': true, 'data': data, 'meta': meta}), 200, headers: {Headers.contentTypeHeader: ['application/json']});
@@ -66,6 +70,34 @@ class FakeServer implements HttpClientAdapter {
         });
       case '/sync/operations':
         return _ok([]);
+      case '/sales/s1':
+        return _ok({
+          'id': 's1', 'receipt_number': 'R-0001', 'status': saleVoided ? 'voided' : 'completed', 'cashier_name': 'Ada', 'outlet_name': 'Main', 'customer': null,
+          'items': [{'name': 'Soap', 'quantity': 2, 'unit_price': '100.00', 'total_price': '200.00'}],
+          'subtotal': '200.00', 'discount_amount': '0.00', 'tax_amount': '0.00', 'total_amount': '200.00', 'paid_so_far': '200.00', 'balance_due': '0.00',
+          'voided_at': saleVoided ? '2026-11-10T10:00:00Z' : null, 'void_reason': saleVoided ? voidReasons.last : null,
+        });
+      case '/sales/s1/void':
+        voidReasons.add((o.data as Map)['reason'] as String);
+        saleVoided = true;
+        return _ok({'sale_id': 's1', 'status': 'voided', 'refund_due': '200.00', 'stock_restored_items': 1});
+      case '/staff':
+        if (o.method == 'POST') {
+          staffCalls.add('invite:${(o.data as Map)['email']}:${(o.data as Map)['role']}');
+          return _ok({'id': 'st2'});
+        }
+        return _ok([
+          {'id': 'st0', 'name': 'Boss', 'email': 'b@x.com', 'role': 'owner', 'status': 'active'},
+          {'id': 'st1', 'name': 'Chi', 'email': 'chi@x.com', 'role': staffRole, 'status': 'active'},
+        ]);
+      case '/staff/st1':
+        if (o.method == 'DELETE') {
+          staffCalls.add('remove');
+        } else {
+          staffCalls.add('patch:${jsonEncode(o.data)}');
+          staffRole = ((o.data as Map)['role'] as String?) ?? staffRole;
+        }
+        return _ok({});
       case '/purchase-orders':
         if (o.method == 'POST') {
           poCalls.add('create');
@@ -464,5 +496,78 @@ void main() {
     await boot(t, role: 'cashier');
     await signIn(t);
     expect(find.byKey(const Key('nav-purchases')), findsNothing);
+  });
+
+  testWidgets('a manager voids a sale: reason required, stock/refund explained, the sale then shows as voided', (t) async {
+    final (server, _) = await boot(t, role: 'owner');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-sales')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('sale-s1')));
+    await t.pumpAndSettle();
+    expect(find.text('completed · Walk-in · Ada · Main'), findsOneWidget);
+    await t.tap(find.byKey(const Key('void-sale')));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('void-reason')), 'x');
+    await t.tap(find.byKey(const Key('void-confirm')));
+    await t.pumpAndSettle();
+    expect(find.textContaining('at least 3'), findsOneWidget);
+    expect(server.voidReasons, isEmpty);
+    await t.enterText(find.byKey(const Key('void-reason')), 'Customer returned goods');
+    await t.tap(find.byKey(const Key('void-confirm')));
+    await t.pumpAndSettle();
+    expect(find.text('Hand back 200.00 to the customer if they already paid. The app does not move money.'), findsOneWidget);
+    await t.tap(find.byKey(const Key('void-ok')));
+    await t.pumpAndSettle();
+    expect(server.voidReasons, ['Customer returned goods']);
+    expect(find.textContaining('VOIDED'), findsOneWidget);
+    expect(find.byKey(const Key('void-sale')), findsNothing, reason: 'a voided sale cannot be voided again');
+  });
+
+  testWidgets('a cashier can open a sale but is not offered Void', (t) async {
+    await boot(t, role: 'cashier');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-sales')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('sale-s1')));
+    await t.pumpAndSettle();
+    expect(find.byKey(const Key('sale-status')), findsOneWidget);
+    expect(find.byKey(const Key('void-sale')), findsNothing);
+  });
+
+  testWidgets('staff: the owner invites, changes a role, and removes only after confirming; the owner row has no menu', (t) async {
+    final (server, _) = await boot(t, role: 'owner');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-staff')));
+    await t.pumpAndSettle();
+    expect(find.byKey(const Key('staff-menu-st0')), findsNothing);
+    await t.tap(find.byKey(const Key('invite-staff')));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('staff-name')), 'New Person');
+    await t.enterText(find.byKey(const Key('staff-email')), 'new@x.com');
+    await t.tap(find.byKey(const Key('staff-send')));
+    await t.pumpAndSettle();
+    expect(server.staffCalls, ['invite:new@x.com:cashier']);
+    await t.pump(const Duration(seconds: 7));
+    await t.tap(find.byKey(const Key('staff-menu-st1')));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Make manager'));
+    await t.pumpAndSettle();
+    expect(server.staffCalls.last, 'patch:{"role":"manager"}');
+    await t.pump(const Duration(seconds: 7));
+    await t.tap(find.byKey(const Key('staff-menu-st1')));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Remove'));
+    await t.pumpAndSettle();
+    expect(server.staffCalls.where((c) => c == 'remove'), isEmpty, reason: 'nothing happens until confirmed');
+    await t.tap(find.byKey(const Key('staff-remove-confirm')));
+    await t.pumpAndSettle();
+    expect(server.staffCalls.last, 'remove');
+  });
+
+  testWidgets('a manager (not owner) has no Staff entry', (t) async {
+    await boot(t, role: 'manager');
+    await signIn(t);
+    expect(find.byKey(const Key('nav-staff')), findsNothing);
   });
 }
