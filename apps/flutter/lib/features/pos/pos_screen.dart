@@ -46,10 +46,13 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _search.requestFocus());
   }
 
+  /// The outlet this till sells from: the one chosen on this device if it still exists, otherwise the main outlet.
   String _location() {
     final w = ref.read(sessionProvider).work!;
     final locs = w.db.locations();
-    return locs.isEmpty ? '' : locs.first['id'] as String;
+    if (locs.isEmpty) return '';
+    final chosen = w.db.meta('pos_location');
+    return locs.any((l) => l['id'] == chosen) ? chosen! : locs.first['id'] as String;
   }
 
   void _toast(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
@@ -64,7 +67,33 @@ class _PosScreenState extends ConsumerState<PosScreen> {
       return const Center(child: Padding(padding: EdgeInsets.all(24), child: Text('No products downloaded yet. Connect to the internet once so the till can load your catalogue.', textAlign: TextAlign.center)));
     }
     final products = w.db.products(search: _q);
+    final outlets = w.db.locations();
     final list = Column(children: [
+      if (outlets.length > 1)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+          child: Row(children: [
+            const Icon(Icons.place_outlined, size: 18),
+            const SizedBox(width: 8),
+            const Text('Selling from'),
+            const SizedBox(width: 8),
+            Expanded(
+              child: DropdownButton<String>(
+                key: const Key('pos-outlet'),
+                isExpanded: true,
+                value: loc,
+                items: [for (final l in outlets) DropdownMenuItem(value: l['id'] as String, child: Text('${l['name']}'))],
+                onChanged: (v) {
+                  if (v == null || v == loc) return;
+                  // stock differs per outlet, so a cart built against another outlet's shelf is not carried over
+                  ref.read(cartProvider.notifier).clear();
+                  w.db.setMeta('pos_location', v);
+                  setState(() {});
+                },
+              ),
+            ),
+          ]),
+        ),
       Padding(
         padding: const EdgeInsets.all(8),
         child: TextField(key: const Key('pos-search'), focusNode: _search, controller: _searchCtl, autofocus: true, textInputAction: TextInputAction.search, onSubmitted: (_) => _submitSearch(loc), decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search name, SKU or barcode', border: OutlineInputBorder()), onChanged: (v) => setState(() => _q = v)),

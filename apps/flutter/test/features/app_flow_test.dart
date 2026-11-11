@@ -34,6 +34,10 @@ class FakeServer implements HttpClientAdapter {
   String staffRole = 'cashier';
   final settingsCalls = <String>[];
   bool otherSessionAlive = true;
+  bool twoOutlets = false;
+  String trStatus = 'pending';
+  final trCalls = <String>[];
+  Map<String, dynamic>? trReceive;
 
   final reportQueries = <Map<String, dynamic>>[];
   ResponseBody _ok(Object data, {Map<String, dynamic> meta = const {}}) => ResponseBody.fromString(jsonEncode({'ok': true, 'data': data, 'meta': meta}), 200, headers: {Headers.contentTypeHeader: ['application/json']});
@@ -62,8 +66,8 @@ class FakeServer implements HttpClientAdapter {
               {'id': 'pa', 'name': 'Soap', 'barcode': '6001234', 'sku': 'SOAP-1', 'item_type': 'product', 'selling_price': '100.00', 'is_active': true, 'reorder_level': 2},
               {'id': 'pb', 'name': 'Delivery', 'item_type': 'service', 'selling_price': '50.00', 'is_active': true},
             ],
-            'locations': [{'id': 'L', 'name': 'Main', 'is_default': true}],
-            'stock_levels': [{'product_id': 'pa', 'location_id': 'L', 'quantity': stockA}],
+            'locations': [{'id': 'L', 'name': 'Main', 'is_default': true}, if (twoOutlets) {'id': 'L2', 'name': 'Lekki', 'is_default': false}],
+            'stock_levels': [{'product_id': 'pa', 'location_id': 'L', 'quantity': stockA}, if (twoOutlets) {'product_id': 'pa', 'location_id': 'L2', 'quantity': 1}],
             'settings': [{'id': 'b1', 'name': 'Shop One', 'currency': 'NGN', 'tax_rate': '0', 'loyalty': {'enabled': false}}],
           },
           'cursors': {'products': 'c'},
@@ -72,6 +76,29 @@ class FakeServer implements HttpClientAdapter {
         });
       case '/sync/operations':
         return _ok([]);
+      case '/locations':
+        if (o.method == 'POST') trCalls.add('outlet:${(o.data as Map)['name']}');
+        return _ok([{'id': 'L', 'name': 'Main', 'is_default': true, 'is_active': true}, {'id': 'L2', 'name': 'Lekki', 'is_default': false, 'is_active': true}]);
+      case '/transfers':
+        if (o.method == 'POST') {
+          trCalls.add('create:${jsonEncode(o.data)}');
+          return _ok({'id': 't2'});
+        }
+        return _ok([{'id': 't1', 'transfer_number': 'TR-000001', 'status': trStatus, 'from_name': 'Main', 'to_name': 'Lekki', 'item_count': 1}], meta: {});
+      case '/transfers/t1':
+        final received = trReceive == null ? null : ((trReceive!['items'] as List).first as Map)['quantity'] as int;
+        return _ok({
+          'id': 't1', 'transfer_number': 'TR-000001', 'status': trStatus, 'from_name': 'Main', 'to_name': 'Lekki', 'variance_units': received == null ? 0 : 4 - received,
+          'items': [{'id': 'ti1', 'product_name': 'Soap', 'quantity_requested': 4, 'quantity_shipped': trStatus == 'pending' ? null : 4, 'quantity_received': received}],
+        });
+      case '/transfers/t1/dispatch':
+        trCalls.add('dispatch:${(o.data as Map)['client_operation_id'] != null}');
+        trStatus = 'in_transit';
+        return _ok({});
+      case '/transfers/t1/receive':
+        trReceive = o.data as Map<String, dynamic>;
+        trStatus = 'completed';
+        return _ok({});
       case '/businesses/b1':
         if (o.method == 'PATCH') settingsCalls.add('biz:${jsonEncode(o.data)}');
         return _ok({'id': 'b1', 'name': 'Shop One', 'currency': 'NGN', 'tax_rate': '0.00', 'effective_plan': 'free'});
@@ -200,8 +227,10 @@ class FakeServer implements HttpClientAdapter {
   void close({bool force = false}) {}
 }
 
-Future<(FakeServer, ProviderContainer)> boot(WidgetTester t, {String role = 'cashier', List<Override> extra = const []}) async {
-  final server = FakeServer()..role = role;
+Future<(FakeServer, ProviderContainer)> boot(WidgetTester t, {String role = 'cashier', List<Override> extra = const [], bool twoOutlets = false}) async {
+  final server = FakeServer()
+    ..role = role
+    ..twoOutlets = twoOutlets;
   final dio = Dio(BaseOptions(baseUrl: 'http://x', responseType: ResponseType.plain, validateStatus: (_) => true))..httpClientAdapter = server;
   final store = MemoryTokenStore();
   late ProviderContainer container;
@@ -675,5 +704,94 @@ void main() {
     await t.pumpAndSettle();
     expect(server.settingsCalls.last, 'revoke');
     expect(find.byKey(const Key('session-old')), findsNothing);
+  });
+
+  testWidgets('transfers: send, then count what arrived (bounded), and a shortfall is shown, not hidden', (t) async {
+    final (server, _) = await boot(t, role: 'owner', twoOutlets: true);
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-locations')));
+    await t.pumpAndSettle();
+    expect(find.text('Lekki'), findsOneWidget);
+    await t.tap(find.text('Transfers'));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('transfer-t1')));
+    await t.pumpAndSettle();
+    expect(find.text('Not sent yet'), findsOneWidget);
+    await t.tap(find.byKey(const Key('tr-dispatch')));
+    await t.pumpAndSettle();
+    expect(server.trCalls, ['dispatch:true'], reason: 'sent with an operation id');
+    expect(find.text('On the way'), findsOneWidget);
+    await t.pump(const Duration(seconds: 7));
+    await t.tap(find.byKey(const Key('tr-receive')));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('tr-recv-ti1')), '9');
+    await t.tap(find.byKey(const Key('tr-recv-confirm')));
+    await t.pumpAndSettle();
+    expect(find.textContaining('between 0 and what was sent'), findsOneWidget);
+    expect(server.trReceive, isNull);
+    await t.enterText(find.byKey(const Key('tr-recv-ti1')), '3');
+    await t.tap(find.byKey(const Key('tr-recv-confirm')));
+    await t.pumpAndSettle();
+    expect(server.trReceive!['items'], [{'item_id': 'ti1', 'quantity': 3}]);
+    expect(find.text('1 unit(s) did not arrive.'), findsOneWidget);
+    expect(find.byKey(const Key('tr-receive')), findsNothing);
+  });
+
+  testWidgets('a new transfer needs two different outlets and a product; the request names both outlets', (t) async {
+    final (server, _) = await boot(t, role: 'owner', twoOutlets: true);
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-locations')));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Transfers'));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('new-transfer')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('tr-save')));
+    await t.pumpAndSettle();
+    expect(find.byKey(const Key('tr-error')), findsOneWidget);
+    await t.tap(find.byKey(const Key('tr-add-product')));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Soap').last);
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('tr-qty-pa')), '2');
+    await t.tap(find.byKey(const Key('tr-save')));
+    await t.pumpAndSettle();
+    expect(server.trCalls.single, 'create:{"from_location_id":"L","to_location_id":"L2","items":[{"product_id":"pa","quantity":2}]}');
+  });
+
+  testWidgets('with two outlets the till lets you choose where you sell from; stock and the queued sale follow that outlet', (t) async {
+    final (server, c) = await boot(t, role: 'owner', twoOutlets: true);
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-pos')));
+    await t.pumpAndSettle();
+    expect(find.text('5 in stock'), findsOneWidget);
+    await t.tap(find.byKey(const Key('product-pa')));
+    await t.pump();
+    await t.tap(find.byKey(const Key('pos-outlet')));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Lekki').last);
+    await t.pumpAndSettle();
+    expect(c.read(cartProvider).cart.isEmpty, isTrue, reason: 'a cart built against another shelf is not carried over');
+    expect(find.text('1 in stock'), findsOneWidget);
+    await t.tap(find.byKey(const Key('product-pa')));
+    await t.pump();
+    await t.tap(find.byKey(const Key('product-pa')));
+    await t.pump();
+    expect(c.read(cartProvider).cart.quantityOf('pa'), 1, reason: 'only one unit at Lekki');
+    await t.tap(find.byKey(const Key('checkout')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('pay-confirm')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('receipt-ok')));
+    await t.pumpAndSettle();
+    expect((server.pushed.single['payload'] as Map)['outlet_id'], 'L2');
+  });
+
+  testWidgets('with one outlet there is no outlet chooser', (t) async {
+    await boot(t, role: 'owner');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-pos')));
+    await t.pumpAndSettle();
+    expect(find.byKey(const Key('pos-outlet')), findsNothing);
   });
 }

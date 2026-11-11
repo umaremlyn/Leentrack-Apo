@@ -312,4 +312,66 @@ void main() {
     expect(sessions.where((x) => x['current'] == true), hasLength(1), reason: 'exactly one session is marked as this device');
     await expectLater(owner.post('/me/change-password', body: {'current_password': 'definitely-wrong', 'new_password': 'Another-Good-Pass-88'}), throwsA(isA<ApiException>().having((e) => e.message, 'message', isNotEmpty)));
   });
+
+  test('paid plan: a second outlet, a transfer with a shortfall, per-outlet stock on the device, selling from the branch, and staff', () async {
+    final cmd = Platform.environment['LT_E2E_MYSQL'];
+    if (cmd == null) {
+      markTestSkipped('LT_E2E_MYSQL not set (run through tools/e2e/run.sh)');
+      return;
+    }
+    final parts = cmd.split(' ').where((x) => x.isNotEmpty).toList();
+    final r = await Process.run(parts.first, [...parts.skip(1), '-e', "UPDATE businesses SET plan='growth', plan_status='active', plan_expiry='2035-01-01' WHERE id='$bid'"]);
+    expect(r.exitCode, 0, reason: '${r.stderr}');
+
+    final branch = await data(owner.post('/locations', body: {'name': 'Lekki'}));
+    await owner.post('/stock/adjustments', body: {'product_id': pB, 'location_id': locationId, 'delta': 6, 'reason': 'found'});
+    await engine.run();
+    expect(db.locations().map((l) => l['name']), containsAll(['Main', 'Lekki']));
+    final mainBefore = db.available(pB, locationId);
+    expect(db.available(pB, branch['id'] as String), 0);
+
+    final tr = await data(owner.post('/transfers', body: {
+      'from_location_id': locationId,
+      'to_location_id': branch['id'],
+      'items': [{'product_id': pB, 'quantity': 3}],
+    }));
+    for (final k in ['transfer_number', 'status', 'from_name', 'to_name', 'items', 'variance_units']) {
+      expect(tr.containsKey(k), isTrue, reason: 'the transfer page reads $k');
+    }
+    final item = (tr['items'] as List).cast<Map<String, dynamic>>().single;
+    final dOp = {'client_operation_id': uuid.v4()};
+    await owner.post('/transfers/${tr['id']}/dispatch', body: dOp);
+    await owner.post('/transfers/${tr['id']}/dispatch', body: dOp); // pressed twice
+    await engine.run();
+    expect(db.available(pB, locationId), mainBefore - 3, reason: 'three units left the main outlet once');
+    expect(db.available(pB, branch['id'] as String), 0, reason: 'nothing has arrived yet');
+
+    final rOp = {'client_operation_id': uuid.v4(), 'items': [{'item_id': item['id'], 'quantity': 2}]};
+    await owner.post('/transfers/${tr['id']}/receive', body: rOp);
+    await owner.post('/transfers/${tr['id']}/receive', body: rOp);
+    final done = await data(owner.get('/transfers/${tr['id']}'));
+    expect(done['status'], 'completed');
+    expect(done['variance_units'], isNot(0), reason: 'one unit went missing and that is recorded, not hidden');
+    await engine.run();
+    expect(db.available(pB, branch['id'] as String), 2, reason: 'two arrived, once');
+
+    // sell from the branch on this device: the server takes it from the branch, not the main outlet
+    final c = Cart(CartSettings.fromSettings(db.metaJson('settings')));
+    final p = db.product(pB)!;
+    expect(c.add(productId: pB, name: p['name'] as String, unitPrice: p['selling_price'] as int, tracksStock: true, available: db.available(pB, branch['id'] as String)), isNull);
+    pos.checkout(c, locationId: branch['id'] as String, credit: false, method: 'cash', amount: c.total);
+    final rr = await engine.run();
+    expect(rr.applied, 1, reason: '${rr.failure}');
+    expect(db.available(pB, branch['id'] as String), 1);
+    expect(db.available(pB, locationId), mainBefore - 3, reason: 'the main outlet was not touched by the branch sale');
+
+    // staff, now that the plan allows it: the same requests the Staff screen sends
+    final inv = await data(owner.post('/staff', body: {'name': 'Cashier One', 'email': 'c1-${uuid.v4().substring(0, 6)}@example.test', 'role': 'cashier'}));
+    expect(inv['status'], 'invited');
+    final up = await data(owner.send('PATCH', '/staff/${inv['id']}', body: {'role': 'manager'}));
+    expect(up['role'], 'manager');
+    await owner.post('/staff/${inv['id']}/resend-invite');
+    await owner.send('DELETE', '/staff/${inv['id']}');
+    expect(((await owner.get('/staff')).data as List).cast<Map<String, dynamic>>().where((s) => s['id'] == inv['id'] && s['status'] != 'removed'), isEmpty);
+  });
 }

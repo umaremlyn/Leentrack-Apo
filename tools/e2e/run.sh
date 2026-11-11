@@ -20,4 +20,6 @@ PID=$!
 trap 'kill $PID 2>/dev/null || true' EXIT
 for _ in $(seq 1 30); do curl -sf "http://127.0.0.1:$PORT/api/v1/health" >/dev/null 2>&1 && break; sleep 0.3; done
 cd "$ROOT/apps/flutter"
+# lets the tests put the throw-away business on a paid plan (there is deliberately no API for that outside real billing)
+export LT_E2E_MYSQL="$MYSQL -u$TEST_DB_USER -p$TEST_DB_PASS ${CONN[*]} $DB"
 LT_E2E_URL="http://127.0.0.1:$PORT/api/v1" flutter test test/e2e --tags e2e "$@"
