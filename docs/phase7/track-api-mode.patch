@@ -1,0 +1,1673 @@
+From 9ce661e6cbfdf4b85ed1c5791caed58419d0ab6d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 15:01:07 +0000
+Subject: [PATCH 1/2] feat(api-mode): optional LeenTrack PHP API backend behind
+ NEXT_PUBLIC_API_BASE_URL (inventory slice)
+
+Build-time switch (lib/api/mode.ts): with NEXT_PUBLIC_API_BASE_URL unset the app is exactly the existing Supabase app
+(legacy providers only renamed and wrapped). With it set, the app talks to the PHP API instead.
+
+- lib/api: dependency-free client (envelope, single-flight refresh, single-flight resume, X-Business-Id, offline != signed out)
+- contexts/api-session.tsx: API-backed useAuth()/useBusiness() with the same shapes and the same error wording the pages look for
+- lib/data/products.ts: Inventory data access with legacy (unchanged Supabase queries) and API implementations
+- app/inventory and the low-stock banner use the data layer; unmigrated screens show a notice in API mode instead of calling Supabase
+- tsconfig: allowImportingTsExtensions (lets the client be unit-tested with plain node)
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01AfTmFoA3hZx1abuSoduadP
+---
+ app/inventory/page.tsx          |  96 +++--------
+ components/low-stock-banner.tsx |   9 +-
+ components/protected-route.tsx  |  16 +-
+ contexts/api-session.tsx        | 291 ++++++++++++++++++++++++++++++++
+ contexts/auth-context.tsx       |  15 +-
+ contexts/business-context.tsx   |  13 +-
+ lib/api/client.test.ts          | 232 +++++++++++++++++++++++++
+ lib/api/client.ts               | 237 ++++++++++++++++++++++++++
+ lib/api/errors.ts               |  21 +++
+ lib/api/index.ts                |  53 ++++++
+ lib/api/mode.ts                 |  22 +++
+ lib/api/token-store.ts          |  44 +++++
+ lib/data/products.ts            | 190 +++++++++++++++++++++
+ tsconfig.json                   |   1 +
+ 14 files changed, 1158 insertions(+), 82 deletions(-)
+ create mode 100644 contexts/api-session.tsx
+ create mode 100644 lib/api/client.test.ts
+ create mode 100644 lib/api/client.ts
+ create mode 100644 lib/api/errors.ts
+ create mode 100644 lib/api/index.ts
+ create mode 100644 lib/api/mode.ts
+ create mode 100644 lib/api/token-store.ts
+ create mode 100644 lib/data/products.ts
+
+diff --git a/app/inventory/page.tsx b/app/inventory/page.tsx
+index a2aab45..c948d1a 100644
+--- a/app/inventory/page.tsx
++++ b/app/inventory/page.tsx
+@@ -12,7 +12,7 @@ import {
+ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+ import { Textarea } from "@/components/ui/textarea"
+ import { Alert, AlertDescription } from "@/components/ui/alert"
+-import { supabase } from "@/lib/supabase"
++import { listProducts, listCategories, saveProduct, deleteProduct, type Product, type Category } from "@/lib/data/products"
+ import { useAuth } from "@/contexts/auth-context"
+ import { useBusiness } from "@/contexts/business-context"
+ import {
+@@ -25,35 +25,6 @@ import PageHeader from "@/components/page-header"
+ import { formatCurrency } from "@/lib/utils/currency"
+ import { BulkCsvImportDialog } from "@/components/inventory/bulk-csv-import-dialog"
+ 
+-interface Product {
+-  id: string
+-  business_id: string
+-  name: string
+-  description: string | null
+-  sku: string | null
+-  barcode: string | null
+-  price: number
+-  cost: number
+-  cost_price: number
+-  selling_price: number
+-  stock_quantity: number
+-  min_stock_level: number
+-  reorder_level: number
+-  category_id: string | null
+-  user_id: string | null
+-  is_active: boolean
+-  image_url: string | null
+-  item_type?: "product" | "service"
+-  created_at: string
+-  updated_at: string
+-  categories?: { name: string }
+-}
+-
+-interface Category {
+-  id: string
+-  name: string
+-}
+-
+ const getCurrency = () => (typeof window !== "undefined" ? localStorage.getItem("currency") || "NGN" : "NGN")
+ const getSymbol = (c: string) => ({ NGN: "₦", GHS: "₵", KES: "KSh", ZAR: "R", XOF: "CFA", USD: "$" }[c] || "")
+ const fmt = (v: number) => formatCurrency(v, getCurrency(), getSymbol(getCurrency()))
+@@ -100,13 +71,8 @@ function InventoryPageContent() {
+     if (!business?.id) { setLoading(false); return }
+     try {
+       setLoading(true)
+-      const { data, error } = await supabase
+-        .from("products")
+-        .select("*, categories (name)")
+-        .eq("business_id", business.id)
+-        .order("name")
+-      if (error) throw error
+-      setProducts(data || [])
++      const data = await listProducts(business.id)
++      setProducts(data)
+     } catch (e: any) {
+       setError("Failed to load products: " + e.message)
+     } finally {
+@@ -116,8 +82,7 @@ function InventoryPageContent() {
+ 
+   const fetchCategories = async () => {
+     if (!business?.id) return
+-    const { data } = await supabase.from("categories").select("id, name").eq("business_id", business.id).order("name")
+-    setCategories(data || [])
++    try { setCategories(await listCategories(business.id)) } catch { setCategories([]) }
+   }
+ 
+   const handleSubmit = async (e: React.FormEvent) => {
+@@ -128,32 +93,24 @@ function InventoryPageContent() {
+       const isService = formData.item_type === "service"
+       const sellingPrice = parseFloat(formData.selling_price) || 0
+       const costPrice = parseFloat(formData.cost_price) || 0
+-      const payload = {
+-        name: formData.name,
+-        description: formData.description || null,
+-        sku: formData.sku || null,
+-        barcode: isService ? null : (formData.barcode || null),
+-        selling_price: sellingPrice,
+-        cost_price: costPrice,
+-        stock_quantity: isService ? 0 : (parseInt(formData.stock_quantity) || 0),
+-        min_stock_level: isService ? 0 : (parseInt(formData.min_stock_level) || 0),
+-        reorder_level: isService ? 0 : (parseInt(formData.reorder_level) || parseInt(formData.min_stock_level) || 5),
+-        category_id: formData.category_id || null,
+-        item_type: formData.item_type || "product",
+-        user_id: user.id,
+-        business_id: business.id,
+-        is_active: true,
+-        updated_at: new Date().toISOString(),
+-      }
+-      if (editingProduct) {
+-        const { error } = await supabase.from("products").update(payload).eq("id", editingProduct.id)
+-        if (error) throw error
+-        setIsEditDialogOpen(false)
+-      } else {
+-        const { error } = await supabase.from("products").insert([{ ...payload, created_at: new Date().toISOString() }])
+-        if (error) throw error
+-        setIsAddDialogOpen(false)
+-      }
++      await saveProduct(
++        {
++          name: formData.name,
++          description: formData.description || null,
++          sku: formData.sku || null,
++          barcode: isService ? null : (formData.barcode || null),
++          selling_price: sellingPrice,
++          cost_price: costPrice,
++          stock_quantity: isService ? 0 : (parseInt(formData.stock_quantity) || 0),
++          min_stock_level: isService ? 0 : (parseInt(formData.min_stock_level) || 0),
++          reorder_level: isService ? 0 : (parseInt(formData.reorder_level) || parseInt(formData.min_stock_level) || 5),
++          category_id: formData.category_id || null,
++          item_type: formData.item_type || "product",
++        },
++        { businessId: business.id, userId: user.id, editing: editingProduct },
++      )
++      if (editingProduct) setIsEditDialogOpen(false)
++      else setIsAddDialogOpen(false)
+       resetForm(); await fetchProducts()
+     } catch (e: any) {
+       setError(e.message || "Failed to save product")
+@@ -164,9 +121,12 @@ function InventoryPageContent() {
+ 
+   const handleDelete = async (id: string) => {
+     if (!confirm("Delete this item? This cannot be undone.")) return
+-    const { error } = await supabase.from("products").delete().eq("id", id)
+-    if (!error) fetchProducts()
+-    else setError("Failed to delete item")
++    try {
++      await deleteProduct(id)
++      fetchProducts()
++    } catch {
++      setError("Failed to delete item")
++    }
+   }
+ 
+   const handleEdit = (p: Product) => {
+diff --git a/components/low-stock-banner.tsx b/components/low-stock-banner.tsx
+index c018df5..e0c2830 100644
+--- a/components/low-stock-banner.tsx
++++ b/components/low-stock-banner.tsx
+@@ -2,7 +2,7 @@
+ 
+ import { useState, useEffect } from "react"
+ import { Button } from "@/components/ui/button"
+-import { supabase } from "@/lib/supabase"
++import { listStockLevels } from "@/lib/data/products"
+ import { useBusiness } from "@/contexts/business-context"
+ import { AlertTriangle, ChevronDown, ChevronUp, ShoppingBag, X } from "lucide-react"
+ import Link from "next/link"
+@@ -31,11 +31,8 @@ export function LowStockBanner() {
+     if (localStorage.getItem(dismissKey)) { setLoading(false); setDismissed(true); return }
+ 
+     const fetch = async () => {
+-      const { data } = await supabase
+-        .from("products")
+-        .select("id, name, stock_quantity, reorder_level, min_stock_level, item_type")
+-        .eq("business_id", business.id)
+-        .eq("is_active", true)
++      let data: Awaited<ReturnType<typeof listStockLevels>> = []
++      try { data = await listStockLevels(business.id) } catch { /* offline or not signed in: no banner */ }
+ 
+       const low = (data ?? []).filter((p) => {
+         if (p.item_type === "service") return false
+diff --git a/components/protected-route.tsx b/components/protected-route.tsx
+index eda83aa..b2bb1e6 100644
+--- a/components/protected-route.tsx
++++ b/components/protected-route.tsx
+@@ -3,7 +3,8 @@
+ import type React from "react"
+ 
+ import { useAuth } from "@/contexts/auth-context"
+-import { useRouter } from "next/navigation"
++import { useRouter, usePathname } from "next/navigation"
++import { isApiMode, isRouteMigrated } from "@/lib/api/mode"
+ import { useEffect } from "react"
+ import { Loader2 } from "lucide-react"
+ 
+@@ -16,6 +17,7 @@ interface ProtectedRouteProps {
+ export function ProtectedRoute({ children, requiredRole, redirectTo = "/login" }: ProtectedRouteProps) {
+   const { user, profile, loading } = useAuth()
+   const router = useRouter()
++  const pathname = usePathname()
+ 
+   const currentRole = profile?.role || (user?.user_metadata?.role as string) || "owner"
+   const allowedRoles = requiredRole
+@@ -67,5 +69,17 @@ export function ProtectedRoute({ children, requiredRole, redirectTo = "/login" }
+     )
+   }
+ 
++  if (isApiMode() && !isRouteMigrated(pathname)) {
++    return (
++      <div className="flex min-h-screen items-center justify-center bg-gray-50 p-6" data-testid="not-migrated">
++        <div className="text-center max-w-md">
++          <h1 className="text-xl font-bold text-gray-900 mb-2">This screen is moving to the new LeenTrack backend</h1>
++          <p className="text-sm text-gray-500 mb-4">It is not available in this build yet. Use the Inventory screen, or the current LeenTrack site for everything else.</p>
++          <a href="/inventory" className="text-sm font-semibold text-blue-600">Go to Inventory</a>
++        </div>
++      </div>
++    )
++  }
++
+   return <>{children}</>
+ }
+diff --git a/contexts/api-session.tsx b/contexts/api-session.tsx
+new file mode 100644
+index 0000000..a557c06
+--- /dev/null
++++ b/contexts/api-session.tsx
+@@ -0,0 +1,291 @@
++"use client"
++
++/**
++ * API-mode providers: the same `useAuth()` / `useBusiness()` shapes the pages already use, backed by the LeenTrack PHP API instead of Supabase.
++ * Only mounted when NEXT_PUBLIC_API_BASE_URL is set at build time (see lib/api/mode.ts).
++ */
++import type React from "react"
++import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react"
++import { AuthContext, type AuthContextType } from "./auth-context"
++import { BusinessContext, type Business, type BusinessContextType } from "./business-context"
++import { api, ApiError, onSessionExpired, type Me, type Membership } from "@/lib/api"
++
++interface ApiSessionValue {
++  me: Me | null
++  memberships: Membership[]
++  businessId: string | null
++  businessDetails: Record<string, any> | null
++  loading: boolean
++  selectBusiness: (id: string) => Promise<void>
++  reloadBusiness: () => Promise<void>
++  reloadMemberships: () => Promise<void>
++}
++
++const ApiSessionContext = createContext<ApiSessionValue | null>(null)
++
++function useApiSession(): ApiSessionValue {
++  const v = useContext(ApiSessionContext)
++  if (!v) throw new Error("ApiSessionContext is missing: wrap the app in AuthProvider")
++  return v
++}
++
++/** Turns API errors into the messages the existing pages already look for (they were written against Supabase's wording). */
++export function toLegacyError(e: unknown): Error {
++  if (e instanceof ApiError) {
++    if (e.isNetwork) return new Error("Network error. Please check your connection.")
++    if (e.code === "invalid_credentials") return new Error("Invalid login credentials")
++    if (e.code === "email_not_verified") return new Error("Email not confirmed")
++    if (e.status === 429) return new Error("Too many requests")
++    return new Error(e.message)
++  }
++  return e instanceof Error ? e : new Error("Something went wrong.")
++}
++
++function legacyBusiness(m: Membership, details: Record<string, any> | null, userId: string): Business {
++  const d = details ?? {}
++  return {
++    id: m.business_id,
++    name: d.name ?? m.name,
++    user_id: m.role === "owner" ? userId : "",
++    owner_id: m.role === "owner" ? userId : null,
++    plan: d.effective_plan ?? m.effective_plan ?? m.plan ?? "free",
++    plan_status: d.plan_status ?? m.plan_status ?? "active",
++    plan_expiry: d.plan_expiry ?? m.plan_expiry ?? null,
++    paystack_customer_id: null,
++    tax_rate: d.tax_rate !== undefined && d.tax_rate !== null ? Number(d.tax_rate) : undefined,
++    created_at: d.created_at ?? "",
++    updated_at: d.updated_at ?? d.created_at ?? "",
++  }
++}
++
++export const ApiAuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
++  const [me, setMe] = useState<Me | null>(null)
++  const [businessId, setBusinessId] = useState<string | null>(null)
++  const [businessDetails, setBusinessDetails] = useState<Record<string, any> | null>(null)
++  const [loading, setLoading] = useState(true)
++
++  const loadBusiness = useCallback(async (id: string) => {
++    try {
++      const r = await api().get<Record<string, any>>(`/businesses/${id}`)
++      setBusinessDetails(r.data)
++    } catch (e) {
++      console.error("Error loading business:", e)
++      setBusinessDetails(null)
++    }
++  }, [])
++
++  const adopt = useCallback(async (next: Me) => {
++    setMe(next)
++    const remembered = api().businessId
++    const pick = next.memberships.find((m) => m.business_id === remembered) ?? next.memberships[0] ?? null
++    if (pick) {
++      api().setBusiness(pick.business_id)
++      setBusinessId(pick.business_id)
++      await loadBusiness(pick.business_id)
++    } else {
++      setBusinessId(null)
++      setBusinessDetails(null)
++    }
++  }, [loadBusiness])
++
++  const clear = useCallback(() => {
++    setMe(null)
++    setBusinessId(null)
++    setBusinessDetails(null)
++  }, [])
++
++  useEffect(() => {
++    let alive = true
++    const off = onSessionExpired(() => { if (alive) clear() })
++    ;(async () => {
++      try {
++        const resumed = await api().resume()
++        if (alive && resumed) await adopt(resumed)
++      } catch (e) {
++        console.error("Error restoring session:", e) // offline at start-up: stay signed out locally, the token is kept
++      } finally {
++        if (alive) setLoading(false)
++      }
++    })()
++    return () => { alive = false; off() }
++  }, [adopt, clear])
++
++  const signIn: AuthContextType["signIn"] = async (email, password) => {
++    try {
++      const next = await api().login(email, password)
++      await adopt({ user: next.user, memberships: next.memberships })
++      return { error: null, user: toUser(next.user), session: toSession(next.user) }
++    } catch (e) {
++      return { error: toLegacyError(e) }
++    }
++  }
++
++  const signUp: AuthContextType["signUp"] = async (email, password, businessData) => {
++    try {
++      const b = businessData ?? {}
++      await api().post(
++        "/auth/register",
++        {
++          email: email.trim(),
++          password,
++          full_name: b.full_name,
++          business_name: b.business_name,
++          business_type: b.business_type,
++          currency: b.currency,
++          phone: b.phone_number,
++        },
++        { anonymous: true },
++      )
++      // The API answers 202 and e-mails a verification link: there is no session until the address is verified.
++      return { error: null, user: null, session: null }
++    } catch (e) {
++      const err = toLegacyError(e)
++      if (e instanceof ApiError && e.code === "validation_failed") {
++        const first = Object.values(e.fields)[0]?.[0]
++        if (first) return { error: new Error(first) }
++      }
++      return { error: err }
++    }
++  }
++
++  const signOut = async () => {
++    await api().logout()
++    clear()
++  }
++
++  const resetPassword = async (email: string) => {
++    try {
++      await api().post("/auth/forgot-password", { email: email.trim() }, { anonymous: true })
++      return { error: null }
++    } catch (e) {
++      return { error: toLegacyError(e) }
++    }
++  }
++
++  const updateProfile: AuthContextType["updateProfile"] = async (updates) => {
++    try {
++      const body: Record<string, unknown> = {}
++      if (updates.full_name !== undefined) body.full_name = updates.full_name
++      if (updates.phone_number !== undefined) body.phone = updates.phone_number
++      if (updates.address !== undefined) body.address = updates.address
++      if (updates.currency !== undefined) body.currency = updates.currency
++      await api().patch("/me", body, { noBusiness: true })
++      const fresh = await api().me()
++      setMe(fresh)
++      return { error: null }
++    } catch (e) {
++      return { error: toLegacyError(e) }
++    }
++  }
++
++  const selectBusiness = useCallback(async (id: string) => {
++    api().setBusiness(id)
++    setBusinessId(id)
++    await loadBusiness(id)
++  }, [loadBusiness])
++
++  const reloadMemberships = useCallback(async () => {
++    const fresh = await api().me()
++    setMe(fresh)
++  }, [])
++
++  const session = useMemo<ApiSessionValue>(() => ({
++    me,
++    memberships: me?.memberships ?? [],
++    businessId,
++    businessDetails,
++    loading,
++    selectBusiness,
++    reloadBusiness: async () => { if (businessId) await loadBusiness(businessId) },
++    reloadMemberships,
++  }), [me, businessId, businessDetails, loading, selectBusiness, loadBusiness, reloadMemberships])
++
++  const membership = me?.memberships.find((m) => m.business_id === businessId) ?? null
++  const value: AuthContextType = {
++    user: me ? toUser(me.user) : null,
++    session: me ? toSession(me.user) : null,
++    profile: me
++      ? {
++          id: me.user.id,
++          email: me.user.email,
++          full_name: me.user.full_name,
++          business_name: membership?.name ?? null,
++          business_type: null,
++          currency: membership?.currency ?? me.user.currency ?? "NGN",
++          phone_number: me.user.phone,
++          address: me.user.address,
++          role: membership?.role ?? "owner",
++          created_at: "",
++          updated_at: "",
++        }
++      : null,
++    business: me && membership ? (legacyBusiness(membership, businessDetails, me.user.id) as any) : null,
++    loading,
++    role: membership?.role ?? null,
++    signIn,
++    signUp,
++    signOut,
++    updateProfile,
++    resetPassword,
++  }
++
++  useEffect(() => {
++    try { if (value.profile?.currency) localStorage.setItem("currency", value.profile.currency) } catch { /* storage blocked */ }
++  }, [value.profile?.currency])
++
++  return (
++    <ApiSessionContext.Provider value={session}>
++      <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
++    </ApiSessionContext.Provider>
++  )
++}
++
++/** The shape pages expect from supabase-js's `User`/`Session`, limited to the fields they actually read. */
++function toUser(u: Me["user"]): any {
++  return { id: u.id, email: u.email, email_confirmed_at: u.email_verified ? new Date().toISOString() : null, user_metadata: { full_name: u.full_name, name: u.full_name } }
++}
++function toSession(u: Me["user"]): any {
++  return { user: toUser(u), access_token: "" }
++}
++
++export const ApiBusinessProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
++  const s = useApiSession()
++  const userId = s.me?.user.id ?? ""
++
++  const businesses: Business[] = useMemo(
++    () => s.memberships.map((m) => legacyBusiness(m, m.business_id === s.businessId ? s.businessDetails : null, userId)),
++    [s.memberships, s.businessId, s.businessDetails, userId],
++  )
++  const business = businesses.find((b) => b.id === s.businessId) ?? null
++
++  const value: BusinessContextType = {
++    business,
++    businesses,
++    loading: s.loading,
++    createBusiness: async (data) => {
++      try {
++        await api().post("/businesses", { name: data.name, business_type: "other", currency: "NGN" }, { noBusiness: true })
++        await s.reloadMemberships()
++        return { error: null }
++      } catch (e) {
++        return { error: toLegacyError(e) }
++      }
++    },
++    updateBusiness: async (businessId, updates) => {
++      try {
++        const body: Record<string, unknown> = {}
++        if (updates.name !== undefined) body.name = updates.name
++        if (updates.tax_rate !== undefined) body.tax_rate = String(updates.tax_rate)
++        await api().patch(`/businesses/${businessId}`, body)
++        await s.reloadBusiness()
++        return { error: null }
++      } catch (e) {
++        return { error: toLegacyError(e) }
++      }
++    },
++    switchBusiness: (id) => { void s.selectBusiness(id) },
++    refreshBusinesses: async () => { await s.reloadMemberships(); await s.reloadBusiness() },
++  }
++
++  return <BusinessContext.Provider value={value}>{children}</BusinessContext.Provider>
++}
+diff --git a/contexts/auth-context.tsx b/contexts/auth-context.tsx
+index 7267f8f..8cffd95 100644
+--- a/contexts/auth-context.tsx
++++ b/contexts/auth-context.tsx
+@@ -4,6 +4,8 @@ import type React from "react"
+ import { createContext, useContext, useEffect, useState } from "react"
+ import type { User, Session } from "@supabase/supabase-js"
+ import { supabase } from "@/lib/supabase"
++import { isApiMode } from "@/lib/api/mode"
++import { ApiAuthProvider } from "./api-session"
+ 
+ interface Profile {
+   id: string
+@@ -32,7 +34,7 @@ interface Business {
+   updated_at: string
+ }
+ 
+-interface AuthContextType {
++export interface AuthContextType {
+   user: User | null
+   profile: Profile | null
+   business: Business | null
+@@ -46,7 +48,7 @@ interface AuthContextType {
+   resetPassword: (email: string) => Promise<{ error: any }>
+ }
+ 
+-const AuthContext = createContext<AuthContextType>({
++export const AuthContext = createContext<AuthContextType>({
+   user: null,
+   profile: null,
+   business: null,
+@@ -68,7 +70,7 @@ export const useAuth = () => {
+   return context
+ }
+ 
+-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
++const LegacyAuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+   const [user, setUser] = useState<User | null>(null)
+   const [session, setSession] = useState<Session | null>(null)
+   const [profile, setProfile] = useState<Profile | null>(null)
+@@ -444,3 +446,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
+ 
+   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+ }
++
++/**
++ * Which backend the app talks to is decided at build time (lib/api/mode.ts). With no NEXT_PUBLIC_API_BASE_URL this is exactly the
++ * original Supabase provider above; with it, the LeenTrack PHP API provider takes over.
++ */
++export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =>
++  isApiMode() ? <ApiAuthProvider>{children}</ApiAuthProvider> : <LegacyAuthProvider>{children}</LegacyAuthProvider>
+diff --git a/contexts/business-context.tsx b/contexts/business-context.tsx
+index 0afbad5..55272e1 100644
+--- a/contexts/business-context.tsx
++++ b/contexts/business-context.tsx
+@@ -4,8 +4,10 @@ import type React from "react"
+ import { createContext, useContext, useEffect, useState } from "react"
+ import { useAuth } from "./auth-context"
+ import { supabase } from "@/lib/supabase"
++import { isApiMode } from "@/lib/api/mode"
++import { ApiBusinessProvider } from "./api-session"
+ 
+-interface Business {
++export interface Business {
+   id: string
+   name: string
+   user_id: string
+@@ -19,7 +21,7 @@ interface Business {
+   updated_at: string
+ }
+ 
+-interface BusinessContextType {
++export interface BusinessContextType {
+   business: Business | null
+   businesses: Business[]
+   loading: boolean
+@@ -29,7 +31,7 @@ interface BusinessContextType {
+   refreshBusinesses: () => Promise<void>
+ }
+ 
+-const BusinessContext = createContext<BusinessContextType>({
++export const BusinessContext = createContext<BusinessContextType>({
+   business: null,
+   businesses: [],
+   loading: true,
+@@ -47,7 +49,7 @@ export const useBusiness = () => {
+   return context
+ }
+ 
+-export const BusinessProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
++const LegacyBusinessProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+   const { user } = useAuth()
+   const [business, setBusiness] = useState<Business | null>(null)
+   const [businesses, setBusinesses] = useState<Business[]>([])
+@@ -245,3 +247,6 @@ export const BusinessProvider: React.FC<{ children: React.ReactNode }> = ({ chil
+ 
+   return <BusinessContext.Provider value={value}>{children}</BusinessContext.Provider>
+ }
++
++export const BusinessProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =>
++  isApiMode() ? <ApiBusinessProvider>{children}</ApiBusinessProvider> : <LegacyBusinessProvider>{children}</LegacyBusinessProvider>
+diff --git a/lib/api/client.test.ts b/lib/api/client.test.ts
+new file mode 100644
+index 0000000..62e6a44
+--- /dev/null
++++ b/lib/api/client.test.ts
+@@ -0,0 +1,232 @@
++// Run with: node --test --experimental-strip-types lib/api/client.test.ts
++// The fake-fetch tests run anywhere. The "real API" tests run only when LT_E2E_URL is set (see tools/e2e in the rebuild repository).
++import test from "node:test"
++import assert from "node:assert/strict"
++import { ApiClient } from "./client.ts"
++import { ApiError } from "./errors.ts"
++import { MemoryTokenStore } from "./token-store.ts"
++
++type Call = { method: string; url: string; headers: Record<string, string>; body: any }
++
++function ok(data: unknown, status = 200, meta: any = {}) {
++  return new Response(JSON.stringify({ ok: true, data, meta }), { status, headers: { "Content-Type": "application/json" } })
++}
++function fail(status: number, code: string, message = code, fields?: any) {
++  return new Response(JSON.stringify({ ok: false, error: { code, message, fields } }), { status, headers: { "Content-Type": "application/json" } })
++}
++
++/** A scriptable server at the fetch level; everything in ApiClient is the real code. */
++function server() {
++  const s = {
++    calls: [] as Call[],
++    validAccess: "a1",
++    validRefresh: "r1",
++    refreshes: 0,
++    refreshRefused: false,
++    down: false,
++    refreshDelayMs: 0,
++    fetch: async (url: any, init: any = {}): Promise<Response> => {
++      if (s.down) throw new TypeError("Failed to fetch")
++      const u = new URL(String(url))
++      const path = u.pathname.replace(/^\/api\/v1/, "")
++      const body = init.body ? JSON.parse(init.body) : undefined
++      s.calls.push({ method: init.method, url: String(url), headers: { ...(init.headers ?? {}) }, body })
++      if (path === "/auth/login") {
++        return body.password === "right"
++          ? ok({ access_token: s.validAccess, refresh_token: s.validRefresh, user: { id: "u1", email: body.email }, memberships: [{ business_id: "b1", name: "Shop", role: "owner", currency: "NGN" }], session_id: "s1" })
++          : fail(401, "invalid_credentials", "Invalid e-mail or password.")
++      }
++      if (path === "/auth/refresh") {
++        await new Promise((r) => setTimeout(r, s.refreshDelayMs))
++        s.refreshes++
++        if (s.refreshRefused || body.refresh_token !== s.validRefresh) return fail(401, "token_invalid")
++        s.validAccess = `a${s.refreshes + 1}`
++        s.validRefresh = `r${s.refreshes + 1}`
++        return ok({ access_token: s.validAccess, refresh_token: s.validRefresh })
++      }
++      if ((init.headers ?? {})["Authorization"] !== `Bearer ${s.validAccess}`) return fail(401, "token_invalid")
++      if (path === "/me") return ok({ user: { id: "u1", email: "a@b.c" }, memberships: [{ business_id: "b1", name: "Shop", role: "owner", currency: "NGN" }] })
++      if (path === "/auth/logout") return ok({})
++      return ok({ path, business: (init.headers ?? {})["X-Business-Id"] ?? null, query: u.search })
++    },
++  }
++  return s
++}
++
++function make(s = server(), opts: { expired?: () => void } = {}) {
++  const store = new MemoryTokenStore()
++  const client = new ApiClient({ baseUrl: "http://x/api/v1/", store, fetchImpl: s.fetch as any, onSessionExpired: opts.expired, device: { id: "web-1", name: "LeenTrack web", platform: "web" } })
++  return { s, store, client }
++}
++
++test("login stores only the refresh token, sends the device, and the base URL tolerates a trailing slash", async () => {
++  const { s, store, client } = make()
++  const me = await client.login(" ada@x.com ", "right")
++  assert.equal(me.memberships[0].role, "owner")
++  assert.equal(store.getRefreshToken(), "r1")
++  assert.deepEqual(s.calls[0].body.device, { id: "web-1", name: "LeenTrack web", platform: "web" })
++  assert.equal(s.calls[0].body.email, "ada@x.com")
++  assert.equal(s.calls[0].url, "http://x/api/v1/auth/login")
++  assert.equal(s.calls[0].headers["Authorization"], undefined, "login is anonymous")
++})
++
++test("a wrong password raises the server's message and stores nothing", async () => {
++  const { store, client } = make()
++  await assert.rejects(() => client.login("a@b.c", "nope"), (e: any) => e instanceof ApiError && e.code === "invalid_credentials" && e.status === 401)
++  assert.equal(store.getRefreshToken(), null)
++  assert.equal(client.hasAccessToken, false)
++})
++
++test("requests carry the bearer token and the chosen business, and query values are encoded (undefined/null dropped)", async () => {
++  const { s, client } = make()
++  await client.login("a@b.c", "right")
++  client.setBusiness("b1")
++  const r = await client.get("/products", { search: "a&b c", page: 2, none: undefined, nil: null })
++  assert.equal(r.data.business, "b1")
++  assert.equal(r.data.query, "?search=a%26b+c&page=2")
++  const last = s.calls[s.calls.length - 1]
++  assert.equal(last.headers["Authorization"], "Bearer a1")
++})
++
++test("/me is not sent with a business header", async () => {
++  const { s, client } = make()
++  await client.login("a@b.c", "right")
++  client.setBusiness("b1")
++  await client.me()
++  assert.equal(s.calls[s.calls.length - 1].headers["X-Business-Id"], undefined)
++})
++
++test("an expired access token is renewed transparently, the request is repeated once, and the rotated refresh token is saved", async () => {
++  const { s, store, client } = make()
++  await client.login("a@b.c", "right")
++  s.validAccess = "rotated-elsewhere"
++  const r = await client.get("/products")
++  assert.equal(r.data.path, "/products")
++  assert.equal(s.refreshes, 1)
++  assert.equal(store.getRefreshToken(), "r2", "the new refresh token must be saved or the next renewal would fail")
++})
++
++test("ten requests that all notice the expiry cause ONE refresh (single flight)", async () => {
++  const { s, client } = make()
++  await client.login("a@b.c", "right")
++  s.validAccess = "stale"
++  s.refreshDelayMs = 30
++  const rs = await Promise.all(Array.from({ length: 10 }, (_, i) => client.get(`/x${i}`)))
++  assert.equal(rs.length, 10)
++  assert.equal(s.refreshes, 1, "a second refresh with the already-rotated token would sign the person out")
++})
++
++test("a refused refresh token ends the session once and the original error is raised", async () => {
++  let expired = 0
++  const { s, store, client } = make(server(), { expired: () => expired++ })
++  await client.login("a@b.c", "right")
++  s.validAccess = "stale"
++  s.refreshRefused = true
++  await assert.rejects(() => client.get("/products"), (e: any) => e.status === 401)
++  assert.equal(expired, 1)
++  assert.equal(store.getRefreshToken(), null)
++  assert.equal(client.hasAccessToken, false)
++})
++
++test("being offline during a refresh is NOT treated as being signed out", async () => {
++  let expired = 0
++  const { s, store, client } = make(server(), { expired: () => expired++ })
++  await client.login("a@b.c", "right")
++  s.validAccess = "stale"
++  s.down = true
++  await assert.rejects(() => client.get("/products"), (e: any) => e instanceof ApiError && e.isNetwork)
++  assert.equal(expired, 0)
++  assert.equal(store.getRefreshToken(), "r1")
++})
++
++test("a 401 that is not about the token (e.g. wrong password on change-password) is not retried or refreshed", async () => {
++  const s = server()
++  const orig = s.fetch
++  s.fetch = async (url: any, init: any) => (String(url).endsWith("/me/change-password") ? fail(401, "invalid_credentials", "Current password is incorrect.") : orig(url, init))
++  const { client } = make(s)
++  await client.login("a@b.c", "right")
++  await assert.rejects(() => client.post("/me/change-password", { current_password: "x", new_password: "y" }), (e: any) => e.code === "invalid_credentials")
++  assert.equal(s.refreshes, 0)
++})
++
++test("resume signs in again from the stored refresh token and rotates it; nothing stored or a refused token gives null", async () => {
++  const { s, store, client } = make()
++  assert.equal(await client.resume(), null)
++  store.setRefreshToken("r1")
++  const me = await client.resume()
++  assert.equal(me?.memberships[0].business_id, "b1")
++  assert.equal(store.getRefreshToken(), "r2")
++  store.setRefreshToken("garbage")
++  assert.equal(await client.resume(), null)
++  assert.equal(store.getRefreshToken(), null)
++  void s
++})
++
++test("two resumes at the same moment share one refresh (the refresh token is single-use)", async () => {
++  const { s, store, client } = make()
++  s.refreshDelayMs = 20
++  store.setRefreshToken("r1")
++  const [a, b] = await Promise.all([client.resume(), client.resume()])
++  assert.ok(a && b, "both callers are signed in")
++  assert.equal(s.refreshes, 1, "a second refresh with the already-rotated token would have signed the person out")
++  assert.equal(store.getRefreshToken(), "r2")
++})
++
++test("resume while offline throws a network error and keeps the stored token", async () => {
++  const { s, store, client } = make()
++  store.setRefreshToken("r1")
++  s.down = true
++  await assert.rejects(() => client.resume(), (e: any) => e.isNetwork)
++  assert.equal(store.getRefreshToken(), "r1")
++})
++
++test("logout clears everything even when the server cannot be reached", async () => {
++  const { s, store, client } = make()
++  await client.login("a@b.c", "right")
++  client.setBusiness("b1")
++  s.down = true
++  await client.logout()
++  assert.equal(store.getRefreshToken(), null)
++  assert.equal(store.getBusinessId(), null)
++  assert.equal(client.hasAccessToken, false)
++})
++
++test("validation errors keep their per-field messages; non-JSON answers become bad_response", async () => {
++  const s = server()
++  const orig = s.fetch
++  s.fetch = async (url: any, init: any) => {
++    if (String(url).endsWith("/customers")) return fail(422, "validation_failed", "The given data was invalid.", { name: ["Required."], email: "Bad address." })
++    if (String(url).endsWith("/html")) return new Response("<html>502</html>", { status: 502 })
++    return orig(url, init)
++  }
++  const { client } = make(s)
++  await client.login("a@b.c", "right")
++  await assert.rejects(() => client.post("/customers", {}), (e: any) => e.status === 422 && e.fields.name[0] === "Required." && e.fields.email[0] === "Bad address.")
++  await assert.rejects(() => client.get("/html"), (e: any) => e.code === "bad_response" && e.status === 502)
++})
++
++// ------------------------------------------------------------------------------------------------- real API (env-gated)
++const REAL = process.env.LT_E2E_URL
++test("real API: register, sign in, read the profile, call a business endpoint, refresh after rotation, and sign out", { skip: REAL ? false : "set LT_E2E_URL (tools/e2e/run-web.sh)" }, async () => {
++  const store = new MemoryTokenStore()
++  const client = new ApiClient({ baseUrl: REAL!, store, device: { id: "web-test-1", name: "LeenTrack web", platform: "web" } })
++  const email = `web-${Date.now()}-${Math.random().toString(36).slice(2, 7)}@example.test`
++  const reg = await client.post("/auth/register", { email, password: "Correct-Horse-9", full_name: "Web Owner", business_name: "Web Shop", business_type: "retail", currency: "NGN" }, { anonymous: true })
++  assert.ok(reg.status === 202 || reg.status === 201)
++  const me = await client.login(email, "Correct-Horse-9")
++  assert.equal(me.memberships[0].role, "owner")
++  client.setBusiness(me.memberships[0].business_id)
++  const prod = await client.post("/products", { name: "Soap", selling_price: "100.00", cost_price: "60.00", stock_quantity: 5 })
++  const list = await client.get<any[]>("/products")
++  assert.ok(list.data.some((p) => p.id === prod.data.id))
++  // force an expired access token: drop it and let the next call renew it
++  ;(client as any).access = "expired-garbage"
++  const again = await client.get<any[]>("/products")
++  assert.equal(again.data.length, list.data.length)
++  assert.notEqual(store.getRefreshToken(), null)
++  const me2 = await client.me()
++  assert.equal(me2.user.email, email)
++  await client.logout()
++  assert.equal(client.hasAccessToken, false)
++  await assert.rejects(() => client.get("/products"), (e: any) => e.status === 401)
++})
+diff --git a/lib/api/client.ts b/lib/api/client.ts
+new file mode 100644
+index 0000000..e632882
+--- /dev/null
++++ b/lib/api/client.ts
+@@ -0,0 +1,237 @@
++import { ApiError } from "./errors.ts"
++import type { TokenStore } from "./token-store.ts"
++
++export interface ApiResult<T = unknown> {
++  data: T
++  meta: Record<string, any>
++  status: number
++}
++
++export interface Membership {
++  business_id: string
++  name: string
++  role: string
++  currency: string
++  plan?: string
++  plan_status?: string
++  plan_expiry?: string | null
++  effective_plan?: string
++}
++
++export interface ApiUser {
++  id: string
++  email: string
++  full_name: string | null
++  phone: string | null
++  address: string | null
++  currency: string
++  must_change_password: boolean
++  [k: string]: any
++}
++
++export interface Me {
++  user: ApiUser
++  memberships: Membership[]
++}
++
++export interface ClientOptions {
++  baseUrl: string
++  store: TokenStore
++  fetchImpl?: typeof fetch
++  /** Called when even the refresh token was refused: the person must sign in again. */
++  onSessionExpired?: () => void
++  /** Identifies this browser to the server's session list. */
++  device?: { id: string; name: string; platform: string }
++}
++
++type RequestOptions = {
++  body?: unknown
++  query?: Record<string, string | number | boolean | undefined | null>
++  headers?: Record<string, string>
++  /** Some calls (login, register, health) must not send the business or the bearer token. */
++  anonymous?: boolean
++  /** Calls that are not about one business (profile, memberships) leave the business header off. */
++  noBusiness?: boolean
++}
++
++const EXPIRED_CODES = new Set(["token_invalid", "token_expired", "unauthenticated"])
++
++/**
++ * Thin client over the LeenTrack envelope `{ok,data,meta}` / `{ok:false,error}`.
++ * Adds the bearer token and X-Business-Id, renews an expired access token ONCE however many requests notice at the same moment
++ * (the server rotates the refresh token on each use, so two parallel refreshes would sign the person out), and treats being offline as
++ * "offline", never as "signed out".
++ */
++export class ApiClient {
++  readonly baseUrl: string
++  private readonly store: TokenStore
++  private readonly fetchImpl: typeof fetch
++  private readonly onSessionExpired?: () => void
++  private readonly device?: ClientOptions["device"]
++  private access: string | null = null
++  private refreshing: Promise<boolean> | null = null
++  private resuming: Promise<Me | null> | null = null
++  businessId: string | null
++
++  constructor(o: ClientOptions) {
++    this.baseUrl = o.baseUrl.replace(/\/+$/, "")
++    this.store = o.store
++    this.fetchImpl = o.fetchImpl ?? ((...a) => fetch(...a))
++    this.onSessionExpired = o.onSessionExpired
++    this.device = o.device
++    this.businessId = o.store.getBusinessId()
++  }
++
++  get hasAccessToken(): boolean {
++    return this.access !== null
++  }
++
++  setBusiness(id: string | null) {
++    this.businessId = id
++    if (id) this.store.setBusinessId(id)
++  }
++
++  // ------------------------------------------------------------------ requests
++  async request<T = any>(method: string, path: string, opt: RequestOptions = {}): Promise<ApiResult<T>> {
++    try {
++      return await this.once<T>(method, path, opt)
++    } catch (e) {
++      if (opt.anonymous || !(e instanceof ApiError) || e.status !== 401 || !EXPIRED_CODES.has(e.code)) throw e
++      if (!(await this.refresh())) throw e
++      return this.once<T>(method, path, opt)
++    }
++  }
++
++  get<T = any>(path: string, query?: RequestOptions["query"], opt: Omit<RequestOptions, "query" | "body"> = {}) {
++    return this.request<T>("GET", path, { ...opt, query })
++  }
++  post<T = any>(path: string, body?: unknown, opt: Omit<RequestOptions, "body"> = {}) {
++    return this.request<T>("POST", path, { ...opt, body })
++  }
++  patch<T = any>(path: string, body?: unknown, opt: Omit<RequestOptions, "body"> = {}) {
++    return this.request<T>("PATCH", path, { ...opt, body })
++  }
++  put<T = any>(path: string, body?: unknown, opt: Omit<RequestOptions, "body"> = {}) {
++    return this.request<T>("PUT", path, { ...opt, body })
++  }
++  delete<T = any>(path: string, opt: RequestOptions = {}) {
++    return this.request<T>("DELETE", path, opt)
++  }
++
++  private async once<T>(method: string, path: string, opt: RequestOptions): Promise<ApiResult<T>> {
++    const headers: Record<string, string> = { Accept: "application/json", ...(opt.headers ?? {}) }
++    if (opt.body !== undefined) headers["Content-Type"] = "application/json"
++    if (!opt.anonymous) {
++      if (this.access) headers["Authorization"] = `Bearer ${this.access}`
++      if (!opt.noBusiness && this.businessId) headers["X-Business-Id"] = this.businessId
++    }
++    let url = this.baseUrl + path
++    if (opt.query) {
++      const qs = new URLSearchParams()
++      for (const [k, v] of Object.entries(opt.query)) if (v !== undefined && v !== null) qs.set(k, String(v))
++      const s = qs.toString()
++      if (s) url += (url.includes("?") ? "&" : "?") + s
++    }
++    let res: Response
++    try {
++      res = await this.fetchImpl(url, { method, headers, body: opt.body === undefined ? undefined : JSON.stringify(opt.body) })
++    } catch {
++      throw new ApiError({ code: "network_error", message: "Cannot reach the server." })
++    }
++    let json: any = null
++    try { json = await res.json() } catch { /* not JSON */ }
++    if (!json || typeof json.ok !== "boolean") {
++      throw new ApiError({ code: "bad_response", message: "Unexpected response from the server.", status: res.status })
++    }
++    if (json.ok) return { data: json.data as T, meta: json.meta ?? {}, status: res.status }
++    const err = json.error ?? {}
++    const fields: Record<string, string[]> = {}
++    for (const [k, v] of Object.entries(err.fields ?? {})) fields[k] = Array.isArray(v) ? v.map(String) : [String(v)]
++    throw new ApiError({ code: err.code ?? "error", message: err.message ?? "Request failed.", status: res.status, fields, requestId: json.meta?.request_id ?? null })
++  }
++
++  // ------------------------------------------------------------------ session
++  /** Single flight: concurrent callers share one refresh. Returns false when the person must sign in again. */
++  private refresh(): Promise<boolean> {
++    if (!this.refreshing) this.refreshing = this.doRefresh().finally(() => { this.refreshing = null })
++    return this.refreshing
++  }
++
++  private async doRefresh(): Promise<boolean> {
++    const rt = this.store.getRefreshToken()
++    if (!rt) { this.expire(); return false }
++    try {
++      const r = await this.once<{ access_token: string; refresh_token: string }>("POST", "/auth/refresh", { body: { refresh_token: rt }, anonymous: true })
++      this.access = r.data.access_token
++      this.store.setRefreshToken(r.data.refresh_token) // rotated: the old one is now useless
++      return true
++    } catch (e) {
++      if (e instanceof ApiError && e.isNetwork) return false // offline is not "signed out"
++      this.expire()
++      return false
++    }
++  }
++
++  private expire() {
++    this.access = null
++    this.store.clear()
++    this.onSessionExpired?.()
++  }
++
++  async login(email: string, password: string): Promise<Me & { session_id?: string }> {
++    const r = await this.once<any>("POST", "/auth/login", {
++      anonymous: true,
++      body: { email: email.trim(), password, ...(this.device ? { device: this.device } : {}) },
++    })
++    this.access = r.data.access_token
++    this.store.setRefreshToken(r.data.refresh_token)
++    return { user: r.data.user, memberships: r.data.memberships ?? [], session_id: r.data.session_id }
++  }
++
++  /** Signs in again from the stored refresh token (page reload). Null when there is none or it was refused; throws only when offline. */
++  resume(): Promise<Me | null> {
++    // Single flight: React (dev strict mode) and quick reloads can ask twice at once, and the refresh token is single-use.
++    if (!this.resuming) this.resuming = this.doResume().finally(() => { this.resuming = null })
++    return this.resuming
++  }
++
++  private async doResume(): Promise<Me | null> {
++    const rt = this.store.getRefreshToken()
++    if (!rt) return null
++    try {
++      const r = await this.once<{ access_token: string; refresh_token: string }>("POST", "/auth/refresh", { body: { refresh_token: rt }, anonymous: true })
++      this.access = r.data.access_token
++      this.store.setRefreshToken(r.data.refresh_token)
++      return (await this.me())
++    } catch (e) {
++      if (e instanceof ApiError && e.isNetwork) throw e
++      this.access = null
++      this.store.clear()
++      return null
++    }
++  }
++
++  async me(): Promise<Me> {
++    const r = await this.get<Me>("/me", undefined, { noBusiness: true })
++    return { user: r.data.user, memberships: r.data.memberships ?? [] }
++  }
++
++  async logout(): Promise<void> {
++    try { await this.post("/auth/logout", undefined, { noBusiness: true }) } catch { /* signing out must work offline too */ }
++    this.access = null
++    this.businessId = null
++    this.store.clear()
++  }
++}
++
++/** Reads every page of a list endpoint (the API caps a page at 200 rows). */
++export async function fetchAll<T = any>(client: ApiClient, path: string, query: Record<string, string | number | boolean | undefined | null> = {}): Promise<T[]> {
++  const out: T[] = []
++  for (let page = 1; page <= 500; page++) {
++    const r = await client.get<T[]>(path, { ...query, per_page: 200, page })
++    out.push(...r.data)
++    const total = Number(r.meta?.total ?? out.length)
++    if (out.length >= total || r.data.length === 0) break
++  }
++  return out
++}
+diff --git a/lib/api/errors.ts b/lib/api/errors.ts
+new file mode 100644
+index 0000000..1891713
+--- /dev/null
++++ b/lib/api/errors.ts
+@@ -0,0 +1,21 @@
++/** A failure reported by the LeenTrack API (or the network) in a form screens can act on. */
++export class ApiError extends Error {
++  readonly code: string
++  readonly status: number | null
++  readonly fields: Record<string, string[]>
++  readonly requestId: string | null
++
++  constructor(init: { code: string; message: string; status?: number | null; fields?: Record<string, string[]>; requestId?: string | null }) {
++    super(init.message)
++    this.name = "ApiError"
++    this.code = init.code
++    this.status = init.status ?? null
++    this.fields = init.fields ?? {}
++    this.requestId = init.requestId ?? null
++  }
++
++  /** The browser could not reach the server (offline, DNS, CORS misconfiguration, timeout). */
++  get isNetwork(): boolean {
++    return this.code === "network_error"
++  }
++}
+diff --git a/lib/api/index.ts b/lib/api/index.ts
+new file mode 100644
+index 0000000..a47e7ec
+--- /dev/null
++++ b/lib/api/index.ts
+@@ -0,0 +1,53 @@
++import { ApiClient } from "./client.ts"
++import { API_BASE_URL } from "./mode.ts"
++import { LocalStorageTokenStore } from "./token-store.ts"
++
++export { ApiClient } from "./client.ts"
++export type { ApiResult, Me, Membership, ApiUser } from "./client.ts"
++export { fetchAll } from "./client.ts"
++export { ApiError } from "./errors.ts"
++export { isApiMode, API_BASE_URL } from "./mode.ts"
++export { LocalStorageTokenStore, MemoryTokenStore } from "./token-store.ts"
++export type { TokenStore } from "./token-store.ts"
++
++let instance: ApiClient | null = null
++let expiredListeners: Array<() => void> = []
++
++/** Called by the auth provider so a refused refresh token returns the person to the sign-in page. */
++export function onSessionExpired(fn: () => void): () => void {
++  expiredListeners.push(fn)
++  return () => { expiredListeners = expiredListeners.filter((x) => x !== fn) }
++}
++
++/** The one shared client for the browser. Throws if the build is in legacy mode (no API address configured). */
++export function api(): ApiClient {
++  if (!API_BASE_URL) throw new Error("NEXT_PUBLIC_API_BASE_URL is not set: this build uses the legacy backend.")
++  if (!instance) {
++    instance = new ApiClient({
++      baseUrl: API_BASE_URL,
++      store: new LocalStorageTokenStore(),
++      onSessionExpired: () => expiredListeners.forEach((f) => f()),
++      device: { id: deviceId(), name: "LeenTrack web", platform: "web" },
++    })
++  }
++  return instance
++}
++
++function deviceId(): string {
++  try {
++    const k = "lt_device_id"
++    let v = window.localStorage.getItem(k)
++    if (!v) {
++      v = "web-" + (crypto.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36))
++      window.localStorage.setItem(k, v)
++    }
++    return v
++  } catch {
++    return "web-" + Math.random().toString(36).slice(2)
++  }
++}
++
++/** A UUID for operations that must be safe to retry (sales, repayments, receipts, transfers). */
++export function newOperationId(): string {
++  return crypto.randomUUID()
++}
+diff --git a/lib/api/mode.ts b/lib/api/mode.ts
+new file mode 100644
+index 0000000..fd38fc9
+--- /dev/null
++++ b/lib/api/mode.ts
+@@ -0,0 +1,22 @@
++/**
++ * Which backend this build talks to.
++ *   NEXT_PUBLIC_API_BASE_URL unset  -> "legacy": exactly the existing Supabase behaviour (this is what production runs today).
++ *   NEXT_PUBLIC_API_BASE_URL set    -> "api": the LeenTrack PHP API (https://…/api/v1).
++ * The value is inlined at BUILD time, so a deployment can never switch backends by accident at runtime.
++ */
++export const API_BASE_URL: string = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "").trim()
++
++export function isApiMode(): boolean {
++  return API_BASE_URL !== ""
++}
++
++/**
++ * Screens that have been moved onto the API. In API mode every other protected screen shows a notice instead of silently calling a
++ * backend that does not exist for it. Grow this list as pages move (docs/16 in the rebuild repository tracks the order).
++ */
++export const MIGRATED_ROUTES: readonly string[] = ["/inventory"]
++
++export function isRouteMigrated(pathname: string | null | undefined): boolean {
++  if (!pathname) return false
++  return MIGRATED_ROUTES.some((r) => pathname === r || pathname.startsWith(r + "/"))
++}
+diff --git a/lib/api/token-store.ts b/lib/api/token-store.ts
+new file mode 100644
+index 0000000..a77a8ce
+--- /dev/null
++++ b/lib/api/token-store.ts
+@@ -0,0 +1,44 @@
++/**
++ * Where the refresh token lives between page loads. The short-lived access token is never stored (memory only).
++ * Default: localStorage, which matches what supabase-js did. A stricter option (httpOnly cookie via a Next.js route handler) is documented
++ * in docs/16 of the rebuild repository as a hardening step.
++ */
++export interface TokenStore {
++  getRefreshToken(): string | null
++  setRefreshToken(token: string): void
++  getBusinessId(): string | null
++  setBusinessId(id: string): void
++  clear(): void
++}
++
++export class MemoryTokenStore implements TokenStore {
++  private refresh: string | null = null
++  private business: string | null = null
++  getRefreshToken() { return this.refresh }
++  setRefreshToken(t: string) { this.refresh = t }
++  getBusinessId() { return this.business }
++  setBusinessId(id: string) { this.business = id }
++  clear() { this.refresh = null; this.business = null }
++}
++
++const REFRESH_KEY = "lt_refresh_token"
++const BUSINESS_KEY = "lt_business_id"
++
++/** localStorage with every access guarded: private windows and blocked storage must degrade to "signed out", never throw. */
++export class LocalStorageTokenStore implements TokenStore {
++  private read(k: string): string | null {
++    try { return typeof window === "undefined" ? null : window.localStorage.getItem(k) } catch { return null }
++  }
++  private write(k: string, v: string | null) {
++    try {
++      if (typeof window === "undefined") return
++      if (v === null) window.localStorage.removeItem(k)
++      else window.localStorage.setItem(k, v)
++    } catch { /* storage blocked: the session lasts until reload */ }
++  }
++  getRefreshToken() { return this.read(REFRESH_KEY) }
++  setRefreshToken(t: string) { this.write(REFRESH_KEY, t) }
++  getBusinessId() { return this.read(BUSINESS_KEY) }
++  setBusinessId(id: string) { this.write(BUSINESS_KEY, id) }
++  clear() { this.write(REFRESH_KEY, null); this.write(BUSINESS_KEY, null) }
++}
+diff --git a/lib/data/products.ts b/lib/data/products.ts
+new file mode 100644
+index 0000000..046b0c1
+--- /dev/null
++++ b/lib/data/products.ts
+@@ -0,0 +1,190 @@
++/**
++ * Products and categories for the Inventory screens. One function per thing the page does, with two implementations chosen by build mode:
++ *  - legacy: the original Supabase queries, moved here unchanged;
++ *  - api: the LeenTrack PHP API, with answers converted to the shape the page already renders (numbers, `categories.name`, `price`/`cost` aliases).
++ * Pages never see the difference.
++ */
++import { supabase } from "@/lib/supabase"
++import { api, fetchAll, isApiMode, ApiError } from "@/lib/api"
++
++export interface Product {
++  id: string
++  business_id: string
++  name: string
++  description: string | null
++  sku: string | null
++  barcode: string | null
++  price: number
++  cost: number
++  cost_price: number
++  selling_price: number
++  stock_quantity: number
++  min_stock_level: number
++  reorder_level: number
++  category_id: string | null
++  user_id: string | null
++  is_active: boolean
++  image_url: string | null
++  item_type?: "product" | "service"
++  created_at: string
++  updated_at: string
++  categories?: { name: string }
++}
++
++export interface Category {
++  id: string
++  name: string
++}
++
++export interface ProductInput {
++  name: string
++  description: string | null
++  sku: string | null
++  barcode: string | null
++  selling_price: number
++  cost_price: number
++  stock_quantity: number
++  min_stock_level: number
++  reorder_level: number
++  category_id: string | null
++  item_type: "product" | "service"
++}
++
++const money = (v: unknown): number => (v === null || v === undefined || v === "" ? 0 : Number(v))
++
++export function toLegacyProduct(p: any, businessId: string, categories: Category[]): Product {
++  const cat = categories.find((c) => c.id === p.category_id)
++  return {
++    id: p.id,
++    business_id: businessId,
++    name: p.name,
++    description: p.description ?? null,
++    sku: p.sku ?? null,
++    barcode: p.barcode ?? null,
++    price: money(p.selling_price),
++    cost: money(p.cost_price),
++    cost_price: money(p.cost_price),
++    selling_price: money(p.selling_price),
++    stock_quantity: Number(p.stock_quantity ?? 0),
++    min_stock_level: Number(p.min_stock_level ?? 0),
++    reorder_level: Number(p.reorder_level ?? 0),
++    category_id: p.category_id ?? null,
++    user_id: null,
++    is_active: p.is_active !== false,
++    image_url: p.image_url ?? null,
++    item_type: p.item_type === "service" ? "service" : "product",
++    created_at: p.created_at ?? "",
++    updated_at: p.updated_at ?? "",
++    ...(cat ? { categories: { name: cat.name } } : {}),
++  }
++}
++
++export async function listCategories(businessId: string): Promise<Category[]> {
++  if (isApiMode()) {
++    const rows = await fetchAll<any>(api(), "/categories")
++    return rows.map((c) => ({ id: c.id, name: c.name })).sort((a, b) => a.name.localeCompare(b.name))
++  }
++  const { data } = await supabase.from("categories").select("id, name").eq("business_id", businessId).order("name")
++  return data || []
++}
++
++export async function listProducts(businessId: string): Promise<Product[]> {
++  if (isApiMode()) {
++    const [rows, cats] = await Promise.all([fetchAll<any>(api(), "/products"), listCategories(businessId)])
++    return rows.map((p) => toLegacyProduct(p, businessId, cats)).sort((a, b) => a.name.localeCompare(b.name))
++  }
++  const { data, error } = await supabase.from("products").select("*, categories (name)").eq("business_id", businessId).order("name")
++  if (error) throw error
++  return (data as Product[]) || []
++}
++
++/** Create or update. In API mode stock is not a product field: a changed quantity becomes an audited stock count. */
++export async function saveProduct(input: ProductInput, ctx: { businessId: string; userId: string; editing?: Product | null }): Promise<void> {
++  const isService = input.item_type === "service"
++  if (isApiMode()) {
++    try {
++      const body: Record<string, unknown> = {
++        name: input.name,
++        description: input.description,
++        sku: input.sku,
++        barcode: input.barcode,
++        selling_price: input.selling_price.toFixed(2),
++        cost_price: input.cost_price.toFixed(2),
++        min_stock_level: input.min_stock_level,
++        reorder_level: input.reorder_level,
++        category_id: input.category_id,
++        item_type: input.item_type,
++      }
++      if (ctx.editing) {
++        await api().patch(`/products/${ctx.editing.id}`, body)
++        if (!isService && input.stock_quantity !== ctx.editing.stock_quantity) {
++          const locs = (await api().get<any[]>("/locations")).data
++          const main = locs.find((l) => l.is_default) ?? locs[0]
++          await api().post("/stock/adjustments", { product_id: ctx.editing.id, location_id: main.id, new_quantity: input.stock_quantity, reason: "count", note: "Edited in the inventory screen" })
++        }
++      } else {
++        await api().post("/products", { ...body, stock_quantity: isService ? 0 : input.stock_quantity })
++      }
++    } catch (e) {
++      throw toError(e)
++    }
++    return
++  }
++  const payload = {
++    ...input,
++    user_id: ctx.userId,
++    business_id: ctx.businessId,
++    is_active: true,
++    updated_at: new Date().toISOString(),
++  }
++  if (ctx.editing) {
++    const { error } = await supabase.from("products").update(payload).eq("id", ctx.editing.id)
++    if (error) throw error
++  } else {
++    const { error } = await supabase.from("products").insert([{ ...payload, created_at: new Date().toISOString() }])
++    if (error) throw error
++  }
++}
++
++/** API mode archives (the record stays for old sales); legacy mode keeps its original hard delete. */
++export async function deleteProduct(id: string): Promise<void> {
++  if (isApiMode()) {
++    try { await api().delete(`/products/${id}`) } catch (e) { throw toError(e) }
++    return
++  }
++  const { error } = await supabase.from("products").delete().eq("id", id)
++  if (error) throw error
++}
++
++function toError(e: unknown): Error {
++  if (e instanceof ApiError) {
++    const first = Object.values(e.fields)[0]?.[0]
++    return new Error(first ?? (e.isNetwork ? "Network error. Please check your connection." : e.message))
++  }
++  return e instanceof Error ? e : new Error("Something went wrong.")
++}
++
++export interface StockLevelRow {
++  id: string
++  name: string
++  stock_quantity: number
++  reorder_level: number | null
++  min_stock_level: number | null
++  item_type?: "product" | "service"
++}
++
++/** Active items with their stock numbers: what the low-stock banner needs on every page. */
++export async function listStockLevels(businessId: string): Promise<StockLevelRow[]> {
++  if (isApiMode()) {
++    const rows = await fetchAll<any>(api(), "/products")
++    return rows
++      .filter((p) => p.is_active !== false)
++      .map((p) => ({ id: p.id, name: p.name, stock_quantity: Number(p.stock_quantity ?? 0), reorder_level: p.reorder_level ?? null, min_stock_level: p.min_stock_level ?? null, item_type: p.item_type === "service" ? "service" : "product" }))
++  }
++  const { data } = await supabase
++    .from("products")
++    .select("id, name, stock_quantity, reorder_level, min_stock_level, item_type")
++    .eq("business_id", businessId)
++    .eq("is_active", true)
++  return (data ?? []) as StockLevelRow[]
++}
+diff --git a/tsconfig.json b/tsconfig.json
+index bc20cf5..5145fd2 100644
+--- a/tsconfig.json
++++ b/tsconfig.json
+@@ -2,6 +2,7 @@
+   "compilerOptions": {
+     "lib": ["dom", "dom.iterable", "esnext"],
+     "allowJs": true,
++    "allowImportingTsExtensions": true,
+     "target": "ES6",
+     "skipLibCheck": true,
+     "strict": true,
+-- 
+2.43.0
+
+
+From fb5d20f866b1ccbfdf28acdc7e37dc04d6798856 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 15:04:19 +0000
+Subject: [PATCH 2/2] fix(api-mode): cross-tab lock around refresh/resume
+
+The API revokes a session whose rotated refresh token is used twice, so two tabs refreshing at the same moment could sign the
+person out. Refresh and resume now run under a Web Locks lock and read the refresh token inside it.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01AfTmFoA3hZx1abuSoduadP
+---
+ lib/api/client.test.ts | 32 ++++++++++++++++++++++++++++++++
+ lib/api/client.ts      | 26 +++++++++++++++++++++++---
+ tsconfig.json          | 23 +++++++++++++++++++----
+ 3 files changed, 74 insertions(+), 7 deletions(-)
+
+diff --git a/lib/api/client.test.ts b/lib/api/client.test.ts
+index 62e6a44..0a1faeb 100644
+--- a/lib/api/client.test.ts
++++ b/lib/api/client.test.ts
+@@ -205,6 +205,38 @@ test("validation errors keep their per-field messages; non-JSON answers become b
+   await assert.rejects(() => client.get("/html"), (e: any) => e.code === "bad_response" && e.status === 502)
+ })
+ 
++test("two TABS (separate clients, one shared store) refreshing at once do not sign each other out when they share a lock", async () => {
++  const s = server()
++  s.refreshDelayMs = 15
++  const store = new MemoryTokenStore()
++  // a simple mutex standing in for navigator.locks
++  let tail: Promise<unknown> = Promise.resolve()
++  const lock = <T,>(fn: () => Promise<T>): Promise<T> => { const run = tail.then(fn, fn); tail = run.catch(() => {}); return run }
++  const mk = () => new ApiClient({ baseUrl: "http://x/api/v1", store, fetchImpl: s.fetch as any, lock })
++  const a = mk(), b = mk()
++  await a.login("a@b.c", "right")
++  await b.resume() // tab B signs in from the stored token (rotates it once)
++  s.validAccess = "stale-for-everyone"
++  const [ra, rb] = await Promise.all([a.get("/x"), b.get("/y")])
++  assert.equal(ra.data.path, "/x")
++  assert.equal(rb.data.path, "/y")
++  assert.notEqual(store.getRefreshToken(), null, "nobody was signed out")
++})
++
++test("WITHOUT a shared lock the same two tabs DO collide (this is why the lock exists)", async () => {
++  const s = server()
++  s.refreshDelayMs = 15
++  const store = new MemoryTokenStore()
++  const noLock = <T,>(fn: () => Promise<T>) => fn()
++  const mk = () => new ApiClient({ baseUrl: "http://x/api/v1", store, fetchImpl: s.fetch as any, lock: noLock })
++  const a = mk(), b = mk()
++  await a.login("a@b.c", "right")
++  await b.resume()
++  s.validAccess = "stale-for-everyone"
++  const results = await Promise.allSettled([a.get("/x"), b.get("/y")])
++  assert.ok(results.some((r) => r.status === "rejected"), "one tab loses the race and is refused")
++})
++
+ // ------------------------------------------------------------------------------------------------- real API (env-gated)
+ const REAL = process.env.LT_E2E_URL
+ test("real API: register, sign in, read the profile, call a business endpoint, refresh after rotation, and sign out", { skip: REAL ? false : "set LT_E2E_URL (tools/e2e/run-web.sh)" }, async () => {
+diff --git a/lib/api/client.ts b/lib/api/client.ts
+index e632882..1ab8141 100644
+--- a/lib/api/client.ts
++++ b/lib/api/client.ts
+@@ -42,6 +42,16 @@ export interface ClientOptions {
+   onSessionExpired?: () => void
+   /** Identifies this browser to the server's session list. */
+   device?: { id: string; name: string; platform: string }
++  /**
++   * Runs [fn] while holding a lock shared by every tab of this browser. The server revokes a session whose rotated refresh token is
++   * used twice, so two tabs refreshing at the same moment would sign the person out. Default: the Web Locks API when it exists.
++   */
++  lock?: <T>(fn: () => Promise<T>) => Promise<T>
++}
++
++function defaultLock<T>(fn: () => Promise<T>): Promise<T> {
++  const locks = typeof navigator !== "undefined" ? (navigator as any).locks : undefined
++  return locks?.request ? locks.request("leentrack-refresh", fn) : fn()
+ }
+ 
+ type RequestOptions = {
+@@ -68,6 +78,7 @@ export class ApiClient {
+   private readonly fetchImpl: typeof fetch
+   private readonly onSessionExpired?: () => void
+   private readonly device?: ClientOptions["device"]
++  private readonly lock: <T>(fn: () => Promise<T>) => Promise<T>
+   private access: string | null = null
+   private refreshing: Promise<boolean> | null = null
+   private resuming: Promise<Me | null> | null = null
+@@ -79,6 +90,7 @@ export class ApiClient {
+     this.fetchImpl = o.fetchImpl ?? ((...a) => fetch(...a))
+     this.onSessionExpired = o.onSessionExpired
+     this.device = o.device
++    this.lock = o.lock ?? defaultLock
+     this.businessId = o.store.getBusinessId()
+   }
+ 
+@@ -157,8 +169,12 @@ export class ApiClient {
+     return this.refreshing
+   }
+ 
+-  private async doRefresh(): Promise<boolean> {
+-    const rt = this.store.getRefreshToken()
++  private doRefresh(): Promise<boolean> {
++    return this.lock(() => this.refreshLocked())
++  }
++
++  private async refreshLocked(): Promise<boolean> {
++    const rt = this.store.getRefreshToken() // read inside the lock: another tab may just have rotated it
+     if (!rt) { this.expire(); return false }
+     try {
+       const r = await this.once<{ access_token: string; refresh_token: string }>("POST", "/auth/refresh", { body: { refresh_token: rt }, anonymous: true })
+@@ -195,7 +211,11 @@ export class ApiClient {
+     return this.resuming
+   }
+ 
+-  private async doResume(): Promise<Me | null> {
++  private doResume(): Promise<Me | null> {
++    return this.lock(() => this.resumeLocked())
++  }
++
++  private async resumeLocked(): Promise<Me | null> {
+     const rt = this.store.getRefreshToken()
+     if (!rt) return null
+     try {
+diff --git a/tsconfig.json b/tsconfig.json
+index 5145fd2..f972e25 100644
+--- a/tsconfig.json
++++ b/tsconfig.json
+@@ -1,6 +1,10 @@
+ {
+   "compilerOptions": {
+-    "lib": ["dom", "dom.iterable", "esnext"],
++    "lib": [
++      "dom",
++      "dom.iterable",
++      "esnext"
++    ],
+     "allowJs": true,
+     "allowImportingTsExtensions": true,
+     "target": "ES6",
+@@ -20,9 +24,20 @@
+       }
+     ],
+     "paths": {
+-      "@/*": ["./*"]
++      "@/*": [
++        "./*"
++      ]
+     }
+   },
+-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
+-  "exclude": ["node_modules", "supabase/functions", ".next"]
++  "include": [
++    "next-env.d.ts",
++    "**/*.ts",
++    "**/*.tsx",
++    ".next/types/**/*.ts"
++  ],
++  "exclude": [
++    "node_modules",
++    "supabase/functions",
++    ".next"
++  ]
+ }
+-- 
+2.43.0
+
