@@ -12,6 +12,7 @@ import 'package:leentrack/data/local_db.dart';
 import 'package:leentrack/features/pos/cart.dart';
 import 'package:leentrack/features/pos/pos_service.dart';
 import 'package:leentrack/network/api_client.dart';
+import 'package:leentrack/network/api_exception.dart';
 import 'package:leentrack/sync/sync_api.dart';
 import 'package:leentrack/sync/sync_engine.dart';
 import 'package:uuid/uuid.dart';
@@ -218,5 +219,159 @@ void main() {
 
     final dash = (await owner.get('/dashboard')).data as Map;
     expect((dash['metrics'] as Map).keys, containsAll(['revenue_billed', 'revenue_collected', 'expenses', 'gross_profit', 'net_profit', 'transactions']));
+  });
+
+  test('purchasing: supplier, order, place, receive (stock arrives once even if sent twice), pay, and the device sees the new stock', () async {
+    final sup = await data(owner.post('/suppliers', body: {'name': 'Acme Ltd', 'phone': '0803'}));
+    final po = await data(owner.post('/purchase-orders', body: {
+      'supplier_id': sup['id'],
+      'items': [{'product_id': pA, 'quantity': 10, 'unit_cost': '55.00'}],
+    }));
+    expect(po['status'], 'draft');
+    await owner.post('/purchase-orders/${po['id']}/order');
+    final detail = await data(owner.get('/purchase-orders/${po['id']}'));
+    final item = (detail['items'] as List).cast<Map<String, dynamic>>().single;
+    for (final k in ['id', 'product_name', 'quantity_ordered', 'quantity_received', 'outstanding', 'line_total']) {
+      expect(item.containsKey(k), isTrue, reason: 'the order screen reads $k');
+    }
+    for (final k in ['order_number', 'status', 'supplier_name', 'outlet_name', 'total_cost', 'received_value', 'paid', 'balance_due']) {
+      expect(detail.containsKey(k), isTrue, reason: 'the order screen reads $k');
+    }
+    await engine.run();
+    final before = db.available(pA, locationId);
+    final body = {'client_operation_id': uuid.v4(), 'items': [{'item_id': item['id'], 'quantity': 4}]};
+    await owner.post('/purchase-orders/${po['id']}/receive', body: body);
+    await owner.post('/purchase-orders/${po['id']}/receive', body: body); // the same press sent twice
+    await engine.run();
+    expect(db.available(pA, locationId), before + 4, reason: 'four units arrived once, not eight');
+    final after = await data(owner.get('/purchase-orders/${po['id']}'));
+    expect(after['status'], 'partially_received');
+    expect(Cents.parse('${after['balance_due']}'), 22000, reason: '4 x 55.00 received, nothing paid yet');
+    final payOp = uuid.v4();
+    final pay = {'amount': '100.00', 'method': 'cash', 'client_operation_id': payOp};
+    await owner.post('/purchase-orders/${po['id']}/payments', body: pay);
+    await owner.post('/purchase-orders/${po['id']}/payments', body: pay);
+    expect(Cents.parse('${(await data(owner.get('/purchase-orders/${po['id']}')))['balance_due']}'), 12000, reason: 'one payment of 100.00');
+    final sups = ((await owner.get('/suppliers')).data as List).cast<Map<String, dynamic>>().firstWhere((s) => s['id'] == sup['id']);
+    expect(Cents.parse('${sups['balance_owed']}'), 12000);
+  });
+
+  test('voiding a sale restores the stock the device sees, refuses a second void, and a plan without staff explains itself', () async {
+    await engine.run();
+    final before = db.available(pB, locationId);
+    await owner.post('/stock/adjustments', body: {'product_id': pB, 'location_id': locationId, 'delta': 3, 'reason': 'found'});
+    final sale = await data(owner.post('/sales', body: {
+      'client_operation_id': uuid.v4(),
+      'outlet_id': locationId,
+      'items': [{'product_id': pB, 'quantity': 2}],
+      'payment': {'mode': 'full', 'method': 'cash', 'amount': '501.00'},
+    }));
+    final detail = await data(owner.get('/sales/${sale['id']}'));
+    for (final k in ['receipt_number', 'status', 'cashier_name', 'outlet_name', 'items', 'subtotal', 'total_amount', 'paid_so_far', 'balance_due', 'voided_at', 'void_reason']) {
+      expect(detail.containsKey(k), isTrue, reason: 'the sale page reads $k');
+    }
+    expect((detail['items'] as List).first, allOf(contains('name'), contains('quantity'), contains('unit_price'), contains('total_price')));
+    await engine.run();
+    expect(db.available(pB, locationId), before + 3 - 2);
+    final v = await data(owner.post('/sales/${sale['id']}/void', body: {'reason': 'Customer returned goods'}));
+    expect(Cents.parse('${v['refund_due']}'), 50100);
+    await engine.run();
+    expect(db.available(pB, locationId), before + 3, reason: 'the two units are back on the shelf');
+    await expectLater(owner.post('/sales/${sale['id']}/void', body: {'reason': 'again'}), throwsA(isA<ApiException>().having((e) => e.status, 'status', 409)));
+    expect(db.available(pB, locationId), before + 3, reason: 'a second void changed nothing');
+    // free plan: the server's own message is what the Staff screen shows
+    await expectLater(owner.post('/staff', body: {'name': 'Cashier One', 'email': 'c1@example.test', 'role': 'cashier'}), throwsA(isA<ApiException>().having((e) => e.code, 'code', 'feature_not_in_plan').having((e) => e.message, 'message', isNotEmpty)));
+    expect(((await owner.get('/staff')).data as List).single['role'], 'owner', reason: 'the team list itself is readable');
+  });
+
+  test('settings: a new tax rate and loyalty settings reach the till through sync and change its totals; alerts, password and sessions behave', () async {
+    await engine.run();
+    expect(CartSettings.fromSettings(db.metaJson('settings')).taxRateBp, 0);
+    final biz = await data(owner.get('/businesses/$bid'));
+    for (final k in ['id', 'name', 'currency', 'tax_rate', 'effective_plan']) {
+      expect(biz.containsKey(k), isTrue, reason: 'the settings screen reads $k');
+    }
+    await owner.send('PATCH', '/businesses/$bid', body: {'name': '${biz['name']}', 'tax_rate': '7.5'});
+    final loy = await data(owner.get('/businesses/$bid/loyalty-settings'));
+    expect(loy.keys, containsAll(['enabled', 'spend_per_point', 'point_value']));
+    await owner.send('PUT', '/businesses/$bid/loyalty-settings', body: {'enabled': true, 'spend_per_point': '100.00', 'point_value': '1.00'});
+    await engine.run();
+    final cs = CartSettings.fromSettings(db.metaJson('settings'));
+    expect(cs.taxRateBp, 750, reason: 'the pull delivered the new tax rate');
+    expect((cs.loyaltyEnabled, cs.pointValue), (true, 100));
+    final cart = Cart(cs)..add(productId: pA, name: 'Soap', unitPrice: 10000, tracksStock: false, available: 0);
+    expect(cart.total, 10750, reason: '100.00 + 7.5% tax');
+
+    final alert = await data(owner.get('/businesses/$bid/alert-settings'));
+    expect(alert.keys, containsAll(['enabled', 'email', 'default_email', 'frequency']));
+    await owner.send('PUT', '/businesses/$bid/alert-settings', body: {'enabled': true, 'frequency': 'hourly', 'email': alert['default_email']});
+    await expectLater(owner.send('PUT', '/businesses/$bid/alert-settings', body: {'enabled': true, 'frequency': 'hourly', 'email': null}), throwsA(isA<ApiException>().having((e) => e.status, 'status', 422)), reason: 'enabling alerts needs a spelled-out address (the screen pre-fills it)');
+    expect((await data(owner.get('/businesses/$bid/alert-settings')))['frequency'], 'hourly');
+
+    final sessions = ((await owner.get('/me/sessions')).data as List).cast<Map<String, dynamic>>();
+    expect(sessions.where((x) => x['current'] == true), hasLength(1), reason: 'exactly one session is marked as this device');
+    await expectLater(owner.post('/me/change-password', body: {'current_password': 'definitely-wrong', 'new_password': 'Another-Good-Pass-88'}), throwsA(isA<ApiException>().having((e) => e.message, 'message', isNotEmpty)));
+  });
+
+  test('paid plan: a second outlet, a transfer with a shortfall, per-outlet stock on the device, selling from the branch, and staff', () async {
+    final cmd = Platform.environment['LT_E2E_MYSQL'];
+    if (cmd == null) {
+      markTestSkipped('LT_E2E_MYSQL not set (run through tools/e2e/run.sh)');
+      return;
+    }
+    final parts = cmd.split(' ').where((x) => x.isNotEmpty).toList();
+    final r = await Process.run(parts.first, [...parts.skip(1), '-e', "UPDATE businesses SET plan='growth', plan_status='active', plan_expiry='2035-01-01' WHERE id='$bid'"]);
+    expect(r.exitCode, 0, reason: '${r.stderr}');
+
+    final branch = await data(owner.post('/locations', body: {'name': 'Lekki'}));
+    await owner.post('/stock/adjustments', body: {'product_id': pB, 'location_id': locationId, 'delta': 6, 'reason': 'found'});
+    await engine.run();
+    expect(db.locations().map((l) => l['name']), containsAll(['Main', 'Lekki']));
+    final mainBefore = db.available(pB, locationId);
+    expect(db.available(pB, branch['id'] as String), 0);
+
+    final tr = await data(owner.post('/transfers', body: {
+      'from_location_id': locationId,
+      'to_location_id': branch['id'],
+      'items': [{'product_id': pB, 'quantity': 3}],
+    }));
+    for (final k in ['transfer_number', 'status', 'from_name', 'to_name', 'items', 'variance_units']) {
+      expect(tr.containsKey(k), isTrue, reason: 'the transfer page reads $k');
+    }
+    final item = (tr['items'] as List).cast<Map<String, dynamic>>().single;
+    final dOp = {'client_operation_id': uuid.v4()};
+    await owner.post('/transfers/${tr['id']}/dispatch', body: dOp);
+    await owner.post('/transfers/${tr['id']}/dispatch', body: dOp); // pressed twice
+    await engine.run();
+    expect(db.available(pB, locationId), mainBefore - 3, reason: 'three units left the main outlet once');
+    expect(db.available(pB, branch['id'] as String), 0, reason: 'nothing has arrived yet');
+
+    final rOp = {'client_operation_id': uuid.v4(), 'items': [{'item_id': item['id'], 'quantity': 2}]};
+    await owner.post('/transfers/${tr['id']}/receive', body: rOp);
+    await owner.post('/transfers/${tr['id']}/receive', body: rOp);
+    final done = await data(owner.get('/transfers/${tr['id']}'));
+    expect(done['status'], 'completed');
+    expect(done['variance_units'], isNot(0), reason: 'one unit went missing and that is recorded, not hidden');
+    await engine.run();
+    expect(db.available(pB, branch['id'] as String), 2, reason: 'two arrived, once');
+
+    // sell from the branch on this device: the server takes it from the branch, not the main outlet
+    final c = Cart(CartSettings.fromSettings(db.metaJson('settings')));
+    final p = db.product(pB)!;
+    expect(c.add(productId: pB, name: p['name'] as String, unitPrice: p['selling_price'] as int, tracksStock: true, available: db.available(pB, branch['id'] as String)), isNull);
+    pos.checkout(c, locationId: branch['id'] as String, credit: false, method: 'cash', amount: c.total);
+    final rr = await engine.run();
+    expect(rr.applied, 1, reason: '${rr.failure}');
+    expect(db.available(pB, branch['id'] as String), 1);
+    expect(db.available(pB, locationId), mainBefore - 3, reason: 'the main outlet was not touched by the branch sale');
+
+    // staff, now that the plan allows it: the same requests the Staff screen sends
+    final inv = await data(owner.post('/staff', body: {'name': 'Cashier One', 'email': 'c1-${uuid.v4().substring(0, 6)}@example.test', 'role': 'cashier'}));
+    expect(inv['status'], 'invited');
+    final up = await data(owner.send('PATCH', '/staff/${inv['id']}', body: {'role': 'manager'}));
+    expect(up['role'], 'manager');
+    await owner.post('/staff/${inv['id']}/resend-invite');
+    await owner.send('DELETE', '/staff/${inv['id']}');
+    expect(((await owner.get('/staff')).data as List).cast<Map<String, dynamic>>().where((s) => s['id'] == inv['id'] && s['status'] != 'removed'), isEmpty);
   });
 }

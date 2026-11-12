@@ -25,6 +25,19 @@ class FakeServer implements HttpClientAdapter {
   final expensesPosted = <Map<String, dynamic>>[];
   final deleted = <String>[];
   int balance = 25000;
+  final poCalls = <String>[];
+  Map<String, dynamic>? lastReceive;
+  String poStatus = 'ordered';
+  bool saleVoided = false;
+  final voidReasons = <String>[];
+  final staffCalls = <String>[];
+  String staffRole = 'cashier';
+  final settingsCalls = <String>[];
+  bool otherSessionAlive = true;
+  bool twoOutlets = false;
+  String trStatus = 'pending';
+  final trCalls = <String>[];
+  Map<String, dynamic>? trReceive;
 
   final reportQueries = <Map<String, dynamic>>[];
   ResponseBody _ok(Object data, {Map<String, dynamic> meta = const {}}) => ResponseBody.fromString(jsonEncode({'ok': true, 'data': data, 'meta': meta}), 200, headers: {Headers.contentTypeHeader: ['application/json']});
@@ -53,8 +66,8 @@ class FakeServer implements HttpClientAdapter {
               {'id': 'pa', 'name': 'Soap', 'barcode': '6001234', 'sku': 'SOAP-1', 'item_type': 'product', 'selling_price': '100.00', 'is_active': true, 'reorder_level': 2},
               {'id': 'pb', 'name': 'Delivery', 'item_type': 'service', 'selling_price': '50.00', 'is_active': true},
             ],
-            'locations': [{'id': 'L', 'name': 'Main', 'is_default': true}],
-            'stock_levels': [{'product_id': 'pa', 'location_id': 'L', 'quantity': stockA}],
+            'locations': [{'id': 'L', 'name': 'Main', 'is_default': true}, if (twoOutlets) {'id': 'L2', 'name': 'Lekki', 'is_default': false}],
+            'stock_levels': [{'product_id': 'pa', 'location_id': 'L', 'quantity': stockA}, if (twoOutlets) {'product_id': 'pa', 'location_id': 'L2', 'quantity': 1}],
             'settings': [{'id': 'b1', 'name': 'Shop One', 'currency': 'NGN', 'tax_rate': '0', 'loyalty': {'enabled': false}}],
           },
           'cursors': {'products': 'c'},
@@ -63,6 +76,106 @@ class FakeServer implements HttpClientAdapter {
         });
       case '/sync/operations':
         return _ok([]);
+      case '/locations':
+        if (o.method == 'POST') trCalls.add('outlet:${(o.data as Map)['name']}');
+        return _ok([{'id': 'L', 'name': 'Main', 'is_default': true, 'is_active': true}, {'id': 'L2', 'name': 'Lekki', 'is_default': false, 'is_active': true}]);
+      case '/transfers':
+        if (o.method == 'POST') {
+          trCalls.add('create:${jsonEncode(o.data)}');
+          return _ok({'id': 't2'});
+        }
+        return _ok([{'id': 't1', 'transfer_number': 'TR-000001', 'status': trStatus, 'from_name': 'Main', 'to_name': 'Lekki', 'item_count': 1}], meta: {});
+      case '/transfers/t1':
+        final received = trReceive == null ? null : ((trReceive!['items'] as List).first as Map)['quantity'] as int;
+        return _ok({
+          'id': 't1', 'transfer_number': 'TR-000001', 'status': trStatus, 'from_name': 'Main', 'to_name': 'Lekki', 'variance_units': received == null ? 0 : 4 - received,
+          'items': [{'id': 'ti1', 'product_name': 'Soap', 'quantity_requested': 4, 'quantity_shipped': trStatus == 'pending' ? null : 4, 'quantity_received': received}],
+        });
+      case '/transfers/t1/dispatch':
+        trCalls.add('dispatch:${(o.data as Map)['client_operation_id'] != null}');
+        trStatus = 'in_transit';
+        return _ok({});
+      case '/transfers/t1/receive':
+        trReceive = o.data as Map<String, dynamic>;
+        trStatus = 'completed';
+        return _ok({});
+      case '/businesses/b1':
+        if (o.method == 'PATCH') settingsCalls.add('biz:${jsonEncode(o.data)}');
+        return _ok({'id': 'b1', 'name': 'Shop One', 'currency': 'NGN', 'tax_rate': '0.00', 'effective_plan': 'free'});
+      case '/businesses/b1/loyalty-settings':
+        if (o.method == 'PUT') settingsCalls.add('loyalty:${jsonEncode(o.data)}');
+        return _ok({'enabled': false, 'spend_per_point': '10000.00', 'point_value': '100.00', 'is_default': true});
+      case '/businesses/b1/alert-settings':
+        if (o.method == 'PUT') settingsCalls.add('alert:${jsonEncode(o.data)}');
+        return _ok({'enabled': false, 'email': null, 'default_email': 'ada@x.com', 'frequency': 'daily'});
+      case '/me/change-password':
+        final b = o.data as Map;
+        if (b['current_password'] != 'right') return _err(422, 'invalid_credentials', 'Your current password is wrong.');
+        settingsCalls.add('pw');
+        return _ok({});
+      case '/me/sessions':
+        return _ok([
+          {'id': 'cur', 'device_name': 'LeenTrack linux', 'platform': 'linux', 'last_used_at': 'now', 'current': true},
+          if (otherSessionAlive) {'id': 'old', 'device_name': 'Old phone', 'platform': 'android', 'last_used_at': 'yesterday', 'current': false},
+        ]);
+      case '/me/sessions/old':
+        otherSessionAlive = false;
+        settingsCalls.add('revoke');
+        return _ok({});
+      case '/sales/s1':
+        return _ok({
+          'id': 's1', 'receipt_number': 'R-0001', 'status': saleVoided ? 'voided' : 'completed', 'cashier_name': 'Ada', 'outlet_name': 'Main', 'customer': null,
+          'items': [{'name': 'Soap', 'quantity': 2, 'unit_price': '100.00', 'total_price': '200.00'}],
+          'subtotal': '200.00', 'discount_amount': '0.00', 'tax_amount': '0.00', 'total_amount': '200.00', 'paid_so_far': '200.00', 'balance_due': '0.00',
+          'voided_at': saleVoided ? '2026-11-10T10:00:00Z' : null, 'void_reason': saleVoided ? voidReasons.last : null,
+        });
+      case '/sales/s1/void':
+        voidReasons.add((o.data as Map)['reason'] as String);
+        saleVoided = true;
+        return _ok({'sale_id': 's1', 'status': 'voided', 'refund_due': '200.00', 'stock_restored_items': 1});
+      case '/staff':
+        if (o.method == 'POST') {
+          staffCalls.add('invite:${(o.data as Map)['email']}:${(o.data as Map)['role']}');
+          return _ok({'id': 'st2'});
+        }
+        return _ok([
+          {'id': 'st0', 'name': 'Boss', 'email': 'b@x.com', 'role': 'owner', 'status': 'active'},
+          {'id': 'st1', 'name': 'Chi', 'email': 'chi@x.com', 'role': staffRole, 'status': 'active'},
+        ]);
+      case '/staff/st1':
+        if (o.method == 'DELETE') {
+          staffCalls.add('remove');
+        } else {
+          staffCalls.add('patch:${jsonEncode(o.data)}');
+          staffRole = ((o.data as Map)['role'] as String?) ?? staffRole;
+        }
+        return _ok({});
+      case '/purchase-orders':
+        if (o.method == 'POST') {
+          poCalls.add('create');
+          lastReceive = null;
+          return _ok({'id': 'po2'});
+        }
+        return _ok([{'id': 'po1', 'order_number': 'PO-000001', 'status': poStatus, 'supplier_name': 'Acme Ltd', 'total_cost': '550.00', 'item_count': 1}], meta: {});
+      case '/purchase-orders/po1':
+        return _ok({
+          'id': 'po1', 'order_number': 'PO-000001', 'status': poStatus, 'supplier_name': 'Acme Ltd', 'outlet_name': 'Main', 'total_cost': '550.00', 'received_value': '0.00', 'paid': '0.00', 'balance_due': '0.00',
+          'items': [{'id': 'it1', 'product_name': 'Soap', 'quantity_ordered': 10, 'quantity_received': 0, 'outstanding': 10, 'line_total': '550.00'}],
+        });
+      case '/purchase-orders/po1/receive':
+        lastReceive = o.data as Map<String, dynamic>;
+        poStatus = 'partially_received';
+        return _ok({'receipt_id': 'rc1'});
+      case '/purchase-orders/po1/cancel':
+        poCalls.add('cancel');
+        poStatus = 'cancelled';
+        return _ok({});
+      case '/suppliers':
+        if (o.method == 'POST') {
+          poCalls.add('supplier:${(o.data as Map)['name']}');
+          return _ok({'id': 'sp2'});
+        }
+        return _ok([{'id': 'sp1', 'name': 'Acme Ltd', 'phone': '0803', 'open_orders': 1, 'balance_owed': '120.00'}], meta: {});
       case '/credit':
         return _ok([
           {
@@ -114,8 +227,10 @@ class FakeServer implements HttpClientAdapter {
   void close({bool force = false}) {}
 }
 
-Future<(FakeServer, ProviderContainer)> boot(WidgetTester t, {String role = 'cashier', List<Override> extra = const []}) async {
-  final server = FakeServer()..role = role;
+Future<(FakeServer, ProviderContainer)> boot(WidgetTester t, {String role = 'cashier', List<Override> extra = const [], bool twoOutlets = false}) async {
+  final server = FakeServer()
+    ..role = role
+    ..twoOutlets = twoOutlets;
   final dio = Dio(BaseOptions(baseUrl: 'http://x', responseType: ResponseType.plain, validateStatus: (_) => true))..httpClientAdapter = server;
   final store = MemoryTokenStore();
   late ProviderContainer container;
@@ -376,5 +491,307 @@ void main() {
     await t.tap(find.text('Retry'));
     await t.pumpAndSettle();
     expect(find.text('Owed in total: 250.00'), findsOneWidget);
+  });
+
+  testWidgets('purchases: orders and suppliers are listed; receiving checks quantities and sends one retry-safe receipt', (t) async {
+    final (server, _) = await boot(t, role: 'owner');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-purchases')));
+    await t.pumpAndSettle();
+    expect(find.textContaining('PO-000001 · Acme Ltd'), findsOneWidget);
+    await t.tap(find.byKey(const Key('po-po1')));
+    await t.pumpAndSettle();
+    expect(find.text('Ordered · into Main'), findsOneWidget);
+    await t.tap(find.byKey(const Key('po-receive')));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('recv-it1')), '11'); // more than outstanding
+    await t.tap(find.byKey(const Key('recv-confirm')));
+    await t.pumpAndSettle();
+    expect(find.textContaining('between 0 and what is outstanding'), findsOneWidget);
+    expect(server.lastReceive, isNull);
+    await t.enterText(find.byKey(const Key('recv-it1')), '4');
+    await t.tap(find.byKey(const Key('recv-confirm')));
+    await t.pumpAndSettle();
+    expect(server.lastReceive!['items'], [{'item_id': 'it1', 'quantity': 4}]);
+    expect(server.lastReceive!['client_operation_id'], isNotEmpty);
+    expect(find.text('Partly received · into Main'), findsOneWidget);
+    // back to the list, then the suppliers tab
+    await t.pageBack();
+    await t.pumpAndSettle();
+    await t.tap(find.text('Suppliers'));
+    await t.pump(const Duration(seconds: 7)); // let the "Stock received" message go away; it covers the button
+    await t.pumpAndSettle();
+    expect(find.text('Owed 120.00'), findsOneWidget);
+    await t.tap(find.byKey(const Key('new-supplier')));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('supplier-name')), 'Fresh Foods');
+    await t.tap(find.byKey(const Key('supplier-save')));
+    await t.pumpAndSettle();
+    expect(server.poCalls, contains('supplier:Fresh Foods'));
+  });
+
+  testWidgets('purchases: cancelling asks first and a cashier cannot reach the screen', (t) async {
+    final (server, _) = await boot(t, role: 'owner');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-purchases')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('po-po1')));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Cancel order'));
+    await t.pumpAndSettle();
+    expect(server.poCalls, isNot(contains('cancel')), reason: 'nothing happens until the owner confirms');
+    await t.tap(find.byKey(const Key('confirm-yes')));
+    await t.pumpAndSettle();
+    expect(server.poCalls, contains('cancel'));
+    expect(find.text('Cancelled · into Main'), findsOneWidget);
+  });
+
+  testWidgets('a cashier has no Purchases entry', (t) async {
+    await boot(t, role: 'cashier');
+    await signIn(t);
+    expect(find.byKey(const Key('nav-purchases')), findsNothing);
+  });
+
+  testWidgets('a manager voids a sale: reason required, stock/refund explained, the sale then shows as voided', (t) async {
+    final (server, _) = await boot(t, role: 'owner');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-sales')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('sale-s1')));
+    await t.pumpAndSettle();
+    expect(find.text('completed · Walk-in · Ada · Main'), findsOneWidget);
+    await t.tap(find.byKey(const Key('void-sale')));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('void-reason')), 'x');
+    await t.tap(find.byKey(const Key('void-confirm')));
+    await t.pumpAndSettle();
+    expect(find.textContaining('at least 3'), findsOneWidget);
+    expect(server.voidReasons, isEmpty);
+    await t.enterText(find.byKey(const Key('void-reason')), 'Customer returned goods');
+    await t.tap(find.byKey(const Key('void-confirm')));
+    await t.pumpAndSettle();
+    expect(find.text('Hand back 200.00 to the customer if they already paid. The app does not move money.'), findsOneWidget);
+    await t.tap(find.byKey(const Key('void-ok')));
+    await t.pumpAndSettle();
+    expect(server.voidReasons, ['Customer returned goods']);
+    expect(find.textContaining('VOIDED'), findsOneWidget);
+    expect(find.byKey(const Key('void-sale')), findsNothing, reason: 'a voided sale cannot be voided again');
+  });
+
+  testWidgets('a cashier can open a sale but is not offered Void', (t) async {
+    await boot(t, role: 'cashier');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-sales')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('sale-s1')));
+    await t.pumpAndSettle();
+    expect(find.byKey(const Key('sale-status')), findsOneWidget);
+    expect(find.byKey(const Key('void-sale')), findsNothing);
+  });
+
+  testWidgets('staff: the owner invites, changes a role, and removes only after confirming; the owner row has no menu', (t) async {
+    final (server, _) = await boot(t, role: 'owner');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-staff')));
+    await t.pumpAndSettle();
+    expect(find.byKey(const Key('staff-menu-st0')), findsNothing);
+    await t.tap(find.byKey(const Key('invite-staff')));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('staff-name')), 'New Person');
+    await t.enterText(find.byKey(const Key('staff-email')), 'new@x.com');
+    await t.tap(find.byKey(const Key('staff-send')));
+    await t.pumpAndSettle();
+    expect(server.staffCalls, ['invite:new@x.com:cashier']);
+    await t.pump(const Duration(seconds: 7));
+    await t.tap(find.byKey(const Key('staff-menu-st1')));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Make manager'));
+    await t.pumpAndSettle();
+    expect(server.staffCalls.last, 'patch:{"role":"manager"}');
+    await t.pump(const Duration(seconds: 7));
+    await t.tap(find.byKey(const Key('staff-menu-st1')));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Remove'));
+    await t.pumpAndSettle();
+    expect(server.staffCalls.where((c) => c == 'remove'), isEmpty, reason: 'nothing happens until confirmed');
+    await t.tap(find.byKey(const Key('staff-remove-confirm')));
+    await t.pumpAndSettle();
+    expect(server.staffCalls.last, 'remove');
+  });
+
+  testWidgets('a manager (not owner) has no Staff entry', (t) async {
+    await boot(t, role: 'manager');
+    await signIn(t);
+    expect(find.byKey(const Key('nav-staff')), findsNothing);
+  });
+
+  testWidgets('settings: the owner changes the tax rate (validated first), loyalty and alerts; a cashier only sees the business read-only', (t) async {
+    final (server, _) = await boot(t, role: 'owner');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('open-settings')));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('biz-tax')), '150');
+    await t.tap(find.byKey(const Key('biz-save')));
+    await t.pumpAndSettle();
+    expect(find.textContaining('between 0 and 100'), findsOneWidget);
+    expect(server.settingsCalls, isEmpty);
+    await t.pump(const Duration(seconds: 7));
+    await t.enterText(find.byKey(const Key('biz-tax')), '7.5');
+    await t.tap(find.byKey(const Key('biz-save')));
+    await t.pumpAndSettle();
+    expect(server.settingsCalls.single, 'biz:{"name":"Shop One","tax_rate":"7.5"}');
+    await t.pump(const Duration(seconds: 7));
+    await t.ensureVisible(find.byKey(const Key('loyalty-save')));
+    await t.tap(find.byKey(const Key('loyalty-on')));
+    await t.tap(find.byKey(const Key('loyalty-save')));
+    await t.pumpAndSettle();
+    expect(server.settingsCalls.last, 'loyalty:{"enabled":true,"spend_per_point":"10000.00","point_value":"100.00"}');
+    await t.pump(const Duration(seconds: 7));
+    await t.ensureVisible(find.byKey(const Key('alert-email')));
+    expect(find.widgetWithText(TextField, 'ada@x.com'), findsOneWidget, reason: 'the address alerts will go to is shown, not hidden');
+    await t.ensureVisible(find.byKey(const Key('alert-on')));
+    await t.tap(find.byKey(const Key('alert-on')));
+    await t.enterText(find.byKey(const Key('alert-email')), 'not-an-address');
+    await t.ensureVisible(find.byKey(const Key('alert-save')));
+    await t.tap(find.byKey(const Key('alert-save')));
+    await t.pumpAndSettle();
+    expect(find.textContaining('address the alerts should go to'), findsOneWidget);
+    expect(server.settingsCalls.last.startsWith('alert:'), isFalse, reason: 'nothing is sent with a bad address');
+    await t.pump(const Duration(seconds: 7));
+    await t.enterText(find.byKey(const Key('alert-email')), 'owner@x.com');
+    await t.tap(find.byKey(const Key('alert-save')));
+    await t.pumpAndSettle();
+    expect(server.settingsCalls.last, 'alert:{"enabled":true,"frequency":"daily","email":"owner@x.com"}');
+  });
+
+  testWidgets('settings: a cashier sees the business read-only and no loyalty or alert cards', (t) async {
+    await boot(t, role: 'cashier');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('open-settings')));
+    await t.pumpAndSettle();
+    expect(find.byKey(const Key('biz-save')), findsNothing);
+    expect(find.byKey(const Key('loyalty-save')), findsNothing);
+    expect(find.byKey(const Key('alert-save')), findsNothing);
+    expect(find.byKey(const Key('change-password')), findsOneWidget);
+  });
+
+  testWidgets('account: a wrong current password shows the server message; a right one succeeds; another device can be signed out, this one cannot', (t) async {
+    final (server, _) = await boot(t, role: 'cashier');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('open-settings')));
+    await t.pumpAndSettle();
+    expect(find.byKey(const Key('revoke-cur')), findsNothing);
+    await t.ensureVisible(find.byKey(const Key('change-password')));
+    await t.tap(find.byKey(const Key('change-password')));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('pw-current')), 'nope');
+    await t.enterText(find.byKey(const Key('pw-new')), 'Brand-New-Pass-77');
+    await t.tap(find.byKey(const Key('pw-save')));
+    await t.pumpAndSettle();
+    expect(find.text('Your current password is wrong.'), findsOneWidget);
+    expect(server.settingsCalls, isEmpty);
+    await t.pump(const Duration(seconds: 7));
+    await t.tap(find.byKey(const Key('change-password')));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('pw-current')), 'right');
+    await t.enterText(find.byKey(const Key('pw-new')), 'Brand-New-Pass-77');
+    await t.tap(find.byKey(const Key('pw-save')));
+    await t.pumpAndSettle();
+    expect(server.settingsCalls, ['pw']);
+    await t.pump(const Duration(seconds: 7));
+    await t.ensureVisible(find.byKey(const Key('revoke-old')));
+    await t.tap(find.byKey(const Key('revoke-old')));
+    await t.pumpAndSettle();
+    expect(server.settingsCalls.last, 'revoke');
+    expect(find.byKey(const Key('session-old')), findsNothing);
+  });
+
+  testWidgets('transfers: send, then count what arrived (bounded), and a shortfall is shown, not hidden', (t) async {
+    final (server, _) = await boot(t, role: 'owner', twoOutlets: true);
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-locations')));
+    await t.pumpAndSettle();
+    expect(find.text('Lekki'), findsOneWidget);
+    await t.tap(find.text('Transfers'));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('transfer-t1')));
+    await t.pumpAndSettle();
+    expect(find.text('Not sent yet'), findsOneWidget);
+    await t.tap(find.byKey(const Key('tr-dispatch')));
+    await t.pumpAndSettle();
+    expect(server.trCalls, ['dispatch:true'], reason: 'sent with an operation id');
+    expect(find.text('On the way'), findsOneWidget);
+    await t.pump(const Duration(seconds: 7));
+    await t.tap(find.byKey(const Key('tr-receive')));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('tr-recv-ti1')), '9');
+    await t.tap(find.byKey(const Key('tr-recv-confirm')));
+    await t.pumpAndSettle();
+    expect(find.textContaining('between 0 and what was sent'), findsOneWidget);
+    expect(server.trReceive, isNull);
+    await t.enterText(find.byKey(const Key('tr-recv-ti1')), '3');
+    await t.tap(find.byKey(const Key('tr-recv-confirm')));
+    await t.pumpAndSettle();
+    expect(server.trReceive!['items'], [{'item_id': 'ti1', 'quantity': 3}]);
+    expect(find.text('1 unit(s) did not arrive.'), findsOneWidget);
+    expect(find.byKey(const Key('tr-receive')), findsNothing);
+  });
+
+  testWidgets('a new transfer needs two different outlets and a product; the request names both outlets', (t) async {
+    final (server, _) = await boot(t, role: 'owner', twoOutlets: true);
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-locations')));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Transfers'));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('new-transfer')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('tr-save')));
+    await t.pumpAndSettle();
+    expect(find.byKey(const Key('tr-error')), findsOneWidget);
+    await t.tap(find.byKey(const Key('tr-add-product')));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Soap').last);
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const Key('tr-qty-pa')), '2');
+    await t.tap(find.byKey(const Key('tr-save')));
+    await t.pumpAndSettle();
+    expect(server.trCalls.single, 'create:{"from_location_id":"L","to_location_id":"L2","items":[{"product_id":"pa","quantity":2}]}');
+  });
+
+  testWidgets('with two outlets the till lets you choose where you sell from; stock and the queued sale follow that outlet', (t) async {
+    final (server, c) = await boot(t, role: 'owner', twoOutlets: true);
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-pos')));
+    await t.pumpAndSettle();
+    expect(find.text('5 in stock'), findsOneWidget);
+    await t.tap(find.byKey(const Key('product-pa')));
+    await t.pump();
+    await t.tap(find.byKey(const Key('pos-outlet')));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Lekki').last);
+    await t.pumpAndSettle();
+    expect(c.read(cartProvider).cart.isEmpty, isTrue, reason: 'a cart built against another shelf is not carried over');
+    expect(find.text('1 in stock'), findsOneWidget);
+    await t.tap(find.byKey(const Key('product-pa')));
+    await t.pump();
+    await t.tap(find.byKey(const Key('product-pa')));
+    await t.pump();
+    expect(c.read(cartProvider).cart.quantityOf('pa'), 1, reason: 'only one unit at Lekki');
+    await t.tap(find.byKey(const Key('checkout')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('pay-confirm')));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('receipt-ok')));
+    await t.pumpAndSettle();
+    expect((server.pushed.single['payload'] as Map)['outlet_id'], 'L2');
+  });
+
+  testWidgets('with one outlet there is no outlet chooser', (t) async {
+    await boot(t, role: 'owner');
+    await signIn(t);
+    await t.tap(find.byKey(const Key('nav-pos')));
+    await t.pumpAndSettle();
+    expect(find.byKey(const Key('pos-outlet')), findsNothing);
   });
 }

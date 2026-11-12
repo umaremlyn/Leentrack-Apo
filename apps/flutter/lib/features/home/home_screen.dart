@@ -7,10 +7,14 @@ import '../credit/credit_screen.dart';
 import '../customers/customers_screen.dart';
 import '../dashboard/dashboard_screen.dart';
 import '../expenses/expenses_screen.dart';
+import '../purchases/purchases_screen.dart';
 import '../reports/reports_screen.dart';
 import '../inventory/inventory_screen.dart';
+import '../locations/locations_screen.dart';
 import '../pos/pos_screen.dart';
 import '../sales/sales_screen.dart';
+import '../settings/settings_screen.dart';
+import '../staff/staff_screen.dart';
 import '../sync/sync_screen.dart';
 
 /// The signed-in app: real role from the membership, the sync bar on top, the offline-capable screens wired in.
@@ -40,6 +44,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             child: Row(children: [
               Expanded(child: Text('${w.membership.name} · ${w.role}', style: Theme.of(context).textTheme.titleSmall, overflow: TextOverflow.ellipsis)),
               if ((app.user?.memberships.length ?? 0) > 1) IconButton(tooltip: 'Switch business', icon: const Icon(Icons.swap_horiz), onPressed: () => ref.read(sessionProvider.notifier).switchBusiness()),
+              IconButton(key: const Key('open-settings'), tooltip: 'Settings', icon: const Icon(Icons.settings_outlined), onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()))),
               IconButton(key: const Key('logout'), tooltip: 'Sign out', icon: const Icon(Icons.logout), onPressed: () => ref.read(sessionProvider.notifier).logout()),
             ]),
           ),
@@ -56,6 +61,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         'inventory' => const InventoryScreen(),
         'sales' => const SalesScreen(),
         'dashboard' => const DashboardScreen(),
+        'purchases' => const PurchasesScreen(),
+        'staff' => const StaffScreen(),
+        'locations' => const LocationsScreen(),
         'credit' => const CreditScreen(),
         'expenses' => const ExpensesScreen(),
         'reports' => const ReportsScreen(),

@@ -86,3 +86,33 @@ Create the first operator after registering normally through the app: `php bin/m
 | daily 03:30 | `cron.php reconcile` | read-only audit; exit code 4 + e-mail to admins when something does not add up |
 
 Overlapping runs are impossible (lock files in `LOCK_DIR`, default `backend/storage/locks`, must be writable). After the first day open `GET /admin/jobs` and `GET /admin/health` as the platform admin: every job should show a recent `ok` run and the health report should have no `fail`.
+
+
+## Common first-deploy mistakes (seen in practice)
+* **Secrets in `config/app.php` defaults.** Never put passwords or keys as the second argument of `Env::get(...)`: that file is in git. Put them in the `.env` (outside the web root, `chmod 600`) and leave the defaults empty. If a secret was ever committed or pasted anywhere, change it.
+* **A typo in `config/app.php` gives an empty HTTP 500.** Check with `php -l config/app.php` before uploading.
+* **`APP_URL` / `WEB_URL` need the scheme**, e.g. `https://api.example.com` (not `api.example.com`). `WEB_URL` is the *web app*, not the API (it is used in e-mailed links).
+* **`CORS_ALLOWED_ORIGINS` needs the scheme** and is compared exactly: `https://app.example.com` (no spaces needed, no wildcard). Mobile/desktop apps do not use CORS; only browsers do.
+* **SMTP port and mode must match:** port 465 = `SMTP_SECURE=ssl`; port 587 = `SMTP_SECURE=tls` (STARTTLS). `SMTP_HOST` is the mail server (often `mail.<domain>`), not the app's address.
+* **Use a Paystack TEST key (`sk_test_...`) on staging.** A live key makes staging charge real cards.
+* **The app's `API_BASE_URL` / `STAGING_API_URL` must be the full API root** including `/api/v1`, no trailing slash: `https://api.example.com/api/v1`.
+* Smoke check from any computer with Dart: `dart run apps/flutter/tool/live_check.dart https://api.example.com/api/v1` (expects health 200, `db: ok`).
+
+
+## The layout that works (checked against a real cPanel File Manager screenshot)
+```
+/home/CPUSER/api.example.com/            <- the subdomain's folder (cPanel creates it)
+    leentrack.env                        <- secrets: NEXT TO backend/, found automatically by app/bootstrap.php
+    backend/
+        app/  bin/  config/  database/  routes/  storage/        (tests/ is not needed on the server)
+        public/                          <- THIS must be the subdomain's DOCUMENT ROOT
+            index.php  .htaccess
+```
+**The single most important setting:** cPanel → *Domains* → the subdomain → *Manage* → **Document Root = `api.example.com/backend/public`**. Uploading the files is not enough: by default the document root is the subdomain's folder itself, which means (a) `https://api.example.com/` has no `index.php` and nothing answers, and (b) **`leentrack.env` and any `.zip` in that folder can be downloaded by anyone**. After changing the document root, open `https://api.example.com/leentrack.env` and `https://api.example.com/<your-zip-name>.zip` in a browser: both must say *Not Found*. Delete the zip from the server after extracting it. If a secret was ever reachable, change it.
+
+* **`vendor/` is not needed** (the app has no runtime dependencies; since Phase 7 a built-in loader starts it without Composer). Do not run `composer install` on the host.
+* **PHP version**: cPanel → *MultiPHP Manager* → set the subdomain to **PHP 8.3 or 8.4**. Older PHP gives an empty HTTP 500. Extensions needed: `pdo_mysql`, `mbstring`, `openssl`, `sodium` (cPanel → *Select PHP Version* / *MultiPHP INI Editor*).
+* **An empty HTTP 500** means PHP stopped before it could answer (errors are hidden from visitors on purpose). The reason is in the `error_log` file (File Manager → `backend/public/error_log`, or cPanel → *Errors*). The usual causes: wrong PHP version, a syntax error in an edited file (`php -l`), a missing extension, an unreadable `leentrack.env`.
+* **Writable folders**: `backend/storage/` (logs, locks, avatars) must be writable by the account (permissions 755 is enough on cPanel).
+* **Create the tables once**: cPanel → *Terminal*: `cd ~/api.example.com/backend && php bin/migrate.php up` (or phpMyAdmin import of `database/migrations/*.up.sql` in order, if there is no terminal).
+* **Smoke checks** (from any computer): `https://api.example.com/api/v1/health` -> `{"ok":true,"data":{"status":"ok","db":"ok",...}}`; `.../leentrack.env`, `.../config/app.php`, `.../storage/logs/` -> 404/403.
