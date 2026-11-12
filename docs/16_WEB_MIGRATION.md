@@ -122,5 +122,5 @@ Estimate: modules 3–10 are each a session of work with the same pattern (data 
 ## 10. Not done / not verified
 * Only **inventory** and the **auth shell** are migrated; everything else shows a notice in API mode.
 * The sign-up form's password hint and the e-mail verification screens still describe the Supabase flow.
-* Not tested on a phone-sized viewport, in Safari/Firefox, or against `api.leenc0.com` (that server was returning HTTP 500 when last checked).
+* Not tested on a phone-sized viewport, in Safari/Firefox, or against `api.example.com` (that server was returning HTTP 500 when last checked).
 * No visual review beyond one screenshot of the Inventory page running on the new API.

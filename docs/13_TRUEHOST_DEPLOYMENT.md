@@ -128,7 +128,7 @@ Overlapping runs are impossible (lock files in `LOCK_DIR`, default `backend/stor
 ```
 Wait two minutes, open `backend/storage/logs/doctor.txt` in *File Manager*, then **delete the cron job** (otherwise it keeps running every minute). Same pattern for migrations: replace `doctor.php` with `migrate.php up` and the output file with `migrate.txt`.
 * If you do not know the PHP path, first run this as the cron command: `ls -d /opt/cpanel/ea-php*/root/usr/bin/php /opt/alt/php*/usr/bin/php /usr/local/bin/php > /home/CPUSER/api.example.com/backend/storage/logs/php-paths.txt 2>&1` and read the file. Use the 8.3/8.4 one.
-* Replace `CPUSER` with the account name shown at the top of File Manager's tree (for you: `bwjkuwlc`).
+* Replace `CPUSER` with the account name shown at the top of File Manager's tree (for you: `CPUSER`).
 * The output files live under `backend/` (outside the document root, so they are not reachable from the web). Delete them afterwards.
 
 **The permanent cron jobs** (cPanel → Cron Jobs, one entry each; same PHP path and `/home/CPUSER/api.example.com/backend/bin/cron.php <job>`): `housekeeping` every 30 minutes, `low-stock-alert` hourly, `expire-plans` daily 01:00, `purge-accounts` daily 02:15, `reconcile` daily 03:30. Without them the app works, but expired plans are not downgraded in the stored data, deleted accounts stay pending, and low-stock e-mails are not sent.

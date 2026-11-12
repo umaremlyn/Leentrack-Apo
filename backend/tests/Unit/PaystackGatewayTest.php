@@ -35,7 +35,7 @@ final class PaystackGatewayTest extends TestCase
         return ['http://127.0.0.1:' . (int) file_get_contents($pf), $proc, $rf, $pf];
     }
 
-    private function gw(string $base, string $secret = 'sk_live_TOPSECRET'): PaystackGateway
+    private function gw(string $base, string $secret = 'sk_test_FAKEFORTESTS'): PaystackGateway
     {
         return new PaystackGateway($secret, $base, new Logger($this->logDir, 'debug'), 5);
     }
@@ -52,7 +52,7 @@ final class PaystackGatewayTest extends TestCase
         proc_close($proc);
         $req = json_decode((string) file_get_contents($rf), true);
         $this->assertSame('POST /transaction/initialize', $req['line']);
-        $this->assertStringContainsString('Authorization: Bearer sk_live_TOPSECRET', $req['head']);
+        $this->assertStringContainsString('Authorization: Bearer sk_test_FAKEFORTESTS', $req['head']);
         $body = json_decode($req['body'], true);
         $this->assertSame([675, 'USD', 'LT-REF1', 'o@example.com'], [$body['amount'], $body['currency'], $body['reference'], $body['email']], 'amount is an integer in minor units');
         $this->assertStringNotContainsString('TOPSECRET', $req['body']);
@@ -72,7 +72,7 @@ final class PaystackGatewayTest extends TestCase
 
     public function testProviderErrorsBecomeA502WithoutLeakingTheKeyOrTheirBody(): void
     {
-        foreach ([[401, '{"status":false,"message":"Invalid key sk_live_TOPSECRET"}'], [200, '{"status":false,"message":"nope"}'], [200, 'not json'], [500, '<html>boom</html>']] as [$st, $body]) {
+        foreach ([[401, '{"status":false,"message":"Invalid key sk_test_FAKEFORTESTS"}'], [200, '{"status":false,"message":"nope"}'], [200, 'not json'], [500, '<html>boom</html>']] as [$st, $body]) {
             [$base, $proc, $rf, $pf] = $this->server($st, $body);
             try { $this->gw($base)->verify('LT-REF1'); $this->fail("accepted $st $body"); } catch (ApiException $e) {
                 $this->assertSame(502, $e->status);

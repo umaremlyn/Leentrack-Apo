@@ -75,7 +75,7 @@ Severity: **C** critical, **H** high, **M** medium, **L** low. All verified by r
 | S-18 | M | Logo stored as base64 data-URL in DB (≤200 KB) — regexp-validated (good), but not content-sniffed | `016` | Keep the limit, add magic-byte verification |
 | S-19 | L | `delete_user_and_data` swallows all errors (`RETURN FALSE`) and references tables that may not exist; client `delete-account.ts` deletes businesses/profile with the user's JWT then signs out (the auth user is not deleted from the client) | `scripts/008`, `lib/delete-account.ts` | Transactional account deletion with retention rules |
 | S-20 | L | `user_sessions.session_token` stored client-supplied; sessions table is advisory — it does not actually revoke anything | `lib/user-sessions.ts` | Real server sessions, revocable |
-| S-21 | L | Secrets in source: **none found** (anon key/URL read from env; Paystack **public** key `NEXT_PUBLIC_PAYSTACK_KEY`). A hard-coded production URL appears (`track.leenc0.com`, `leentrack.vercel.app`) — not secret | greps | — |
+| S-21 | L | Secrets in source: **none found** (anon key/URL read from env; Paystack **public** key `NEXT_PUBLIC_PAYSTACK_KEY`). A hard-coded production URL appears (`track.example.com`, `leentrack.vercel.app`) — not secret | greps | — |
 | S-22 | L | `profiles.role` conflates *platform role* (`admin`) and *business role* (`owner/manager/cashier`) in a single user-level field, so a user cannot hold different roles in different businesses | schema | Separate concepts |
 
 ## 5. Business-logic findings that affect fidelity
