@@ -117,3 +117,18 @@ Overlapping runs are impossible (lock files in `LOCK_DIR`, default `backend/stor
 * **Create the tables once**: cPanel → *Terminal*: `cd ~/api.example.com/backend && php bin/migrate.php up` (or phpMyAdmin import of `database/migrations/*.up.sql` in order, if there is no terminal).
 * **Smoke checks** (from any computer): `https://api.example.com/api/v1/health` -> `{"ok":true,"data":{"status":"ok","db":"ok",...}}`; `.../leentrack.env`, `.../config/app.php`, `.../storage/logs/` -> 404/403.
 * **When something is off, run the doctor:** `php bin/doctor.php` (cPanel Terminal, in `backend/`). It checks the PHP version and extensions, finds the env file (same search as the app), lists which setting NAMES are present (never their values), flags a BOM, `export`, a missing `https://`, SMTP port/mode mismatch, a live Paystack key on staging, unwritable folders, the database connection (with a hint per error) and whether all 16 migrations are applied. Its output is safe to paste into a support chat. `/api/v1/health` returns `"db":"not_configured"` when `DB_NAME` is empty (the env file was not read), `"db":"down"` when MySQL refuses the connection, `"db":"ok"` when all is well.
+
+
+## No terminal (typical shared hosting)? Two ways to run the setup commands
+**A. phpMyAdmin (for the tables).** cPanel → *phpMyAdmin* → click your (empty) database → *Import* → choose `backend/database/install/leentrack-install.sql` (download it from the repository) → *Go*. It creates all 42 tables and records the 16 migrations exactly as `bin/migrate.php` would (verified: identical schema, and `migrate.php up` afterwards reports "Nothing to migrate"). Importing twice changes nothing: it stops at "Duplicate entry '0001'". When a new version of the app adds a migration, the new installer file is regenerated (a test fails if it is forgotten); for an existing database, import only the new `database/migrations/NNNN_*.up.sql` and add its row to `schema_migrations`, or use option B.
+
+**B. A one-off cron job (to run ANY command, e.g. the doctor or migrations).** cPanel → *Cron Jobs* → *Add New Cron Job* → *Common Settings: Once Per Minute* → Command (one line):
+```
+/opt/cpanel/ea-php84/root/usr/bin/php /home/CPUSER/api.example.com/backend/bin/doctor.php > /home/CPUSER/api.example.com/backend/storage/logs/doctor.txt 2>&1
+```
+Wait two minutes, open `backend/storage/logs/doctor.txt` in *File Manager*, then **delete the cron job** (otherwise it keeps running every minute). Same pattern for migrations: replace `doctor.php` with `migrate.php up` and the output file with `migrate.txt`.
+* If you do not know the PHP path, first run this as the cron command: `ls -d /opt/cpanel/ea-php*/root/usr/bin/php /opt/alt/php*/usr/bin/php /usr/local/bin/php > /home/CPUSER/api.example.com/backend/storage/logs/php-paths.txt 2>&1` and read the file. Use the 8.3/8.4 one.
+* Replace `CPUSER` with the account name shown at the top of File Manager's tree (for you: `bwjkuwlc`).
+* The output files live under `backend/` (outside the document root, so they are not reachable from the web). Delete them afterwards.
+
+**The permanent cron jobs** (cPanel → Cron Jobs, one entry each; same PHP path and `/home/CPUSER/api.example.com/backend/bin/cron.php <job>`): `housekeeping` every 30 minutes, `low-stock-alert` hourly, `expire-plans` daily 01:00, `purge-accounts` daily 02:15, `reconcile` daily 03:30. Without them the app works, but expired plans are not downgraded in the stored data, deleted accounts stay pending, and low-stock e-mails are not sent.
