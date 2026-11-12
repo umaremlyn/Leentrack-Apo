@@ -103,8 +103,26 @@ if (($cfg['db']['name'] ?? '') === '') {
         $line('ok', 'database connection');
         $n = (int) $pdo->query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()")->fetchColumn();
         $has = (bool) $pdo->query("SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'schema_migrations'")->fetchColumn();
-        $line($n > 0 ? 'ok' : 'FAIL', "$n table(s) in the database", $n > 0 ? '' : 'run: php bin/migrate.php up');
-        if ($has) { $line('info', 'migrations applied: ' . (int) $pdo->query('SELECT COUNT(*) FROM schema_migrations')->fetchColumn(), 'expected 16'); }
+        $line($n > 0 ? 'ok' : 'FAIL', "$n table(s) in the database", $n > 0 ? '' : 'import database/install/leentrack-install.sql (phpMyAdmin) or run: php bin/migrate.php up');
+        $have = array_map('strtolower', $pdo->query("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()")->fetchAll(PDO::FETCH_COLUMN));
+        $recorded = $has ? array_map('strval', $pdo->query('SELECT version FROM schema_migrations')->fetchAll(PDO::FETCH_COLUMN)) : [];
+        $owned = ['schema_migrations'];
+        $pending = [];
+        foreach (glob($root . '/database/migrations/*.up.sql') ?: [] as $f) {
+            if (!preg_match('/^(\d{4})_([a-z0-9_]+)\.up\.sql$/', basename($f), $m)) { continue; }
+            preg_match_all('/CREATE TABLE(?: IF NOT EXISTS)?\s+`?([a-z0-9_]+)`?/i', (string) file_get_contents($f), $t);
+            $tables = array_map('strtolower', $t[1]);
+            $owned = array_merge($owned, $tables);
+            $present = array_values(array_intersect($tables, $have));
+            $isRecorded = in_array($m[1], $recorded, true);
+            if (!$isRecorded) { $pending[] = $m[1]; }
+            if (!$isRecorded || count($present) !== count($tables)) {
+                $line($isRecorded ? 'FAIL' : 'warn', "migration {$m[1]} {$m[2]}: " . ($isRecorded ? 'recorded' : 'NOT recorded') . ', tables present ' . count($present) . '/' . count($tables), 'missing: ' . (implode(', ', array_diff($tables, $present)) ?: 'none') . ($isRecorded || !$present ? '' : '; ALREADY EXIST: ' . implode(', ', $present)));
+            }
+        }
+        $line($pending ? 'FAIL' : 'ok', 'migrations applied: ' . count($recorded) . ' of ' . count(glob($root . '/database/migrations/*.up.sql') ?: []), $pending ? 'not yet applied: ' . implode(', ', $pending) : '');
+        $extra = array_values(array_diff($have, $owned));
+        if ($extra) { $line('info', count($extra) . ' table(s) in this database that LeenTrack did not create (left alone)', implode(', ', $extra)); }
     } catch (Throwable $e) {
         // class + driver message only: PDO messages never contain the password
         $line('FAIL', 'database connection failed', get_class($e) . ': ' . preg_replace('/\s+/', ' ', $e->getMessage()));
